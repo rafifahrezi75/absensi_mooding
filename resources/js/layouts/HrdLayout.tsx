@@ -11,10 +11,9 @@ import {
   Sun,
   Timer,
   Shield,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelLeft,
-  X,
+  ChevronLeft,
+  ChevronRight,
+  Menu,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,14 +38,6 @@ export function HrdLayout({ children }: HrdLayoutProps) {
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const toggleSidebar = () => {
-    setSidebarOpen((prev) => {
-      const next = !prev;
-      localStorage.setItem('hrd_sidebar_open', String(next));
-      return next;
-    });
-  };
 
   useEffect(() => {
     const rawUser = localStorage.getItem('hrd_session_user');
@@ -152,7 +143,7 @@ export function HrdLayout({ children }: HrdLayoutProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg"
               onClick={() => {
                 setMobileMenuOpen(false);
                 setSidebarOpen(false);
@@ -160,7 +151,7 @@ export function HrdLayout({ children }: HrdLayoutProps) {
               }}
               title="Tutup Sidebar"
             >
-              <PanelLeftClose className="h-4 w-4" />
+              <ChevronLeft className="h-5 w-5" />
             </Button>
           </div>
 
@@ -228,21 +219,30 @@ export function HrdLayout({ children }: HrdLayoutProps) {
       <div className="flex-1 flex flex-col min-w-0 transition-all duration-300">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-card/90 px-4 md:px-6 backdrop-blur-md shadow-xs">
           <div className="flex items-center gap-2 md:gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                if (window.innerWidth < 768) {
-                  setMobileMenuOpen(!mobileMenuOpen);
-                } else {
-                  toggleSidebar();
-                }
-              }}
-              title={sidebarOpen ? 'Tutup Sidebar' : 'Buka Sidebar'}
-            >
-              {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeftOpen className="h-5 w-5 text-primary" />}
-            </Button>
+            {!sidebarOpen ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 text-muted-foreground hover:text-foreground rounded-lg"
+                onClick={() => {
+                  setSidebarOpen(true);
+                  localStorage.setItem('hrd_sidebar_open', 'true');
+                }}
+                title="Buka Sidebar"
+              >
+                <ChevronRight className="h-5 w-5 text-primary" />
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 text-muted-foreground hover:text-foreground rounded-lg md:hidden"
+                onClick={() => setMobileMenuOpen(true)}
+                title="Buka Menu"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+            )}
 
             <div>
               <div className="text-sm font-semibold tracking-tight">Sistem Presensi Kiosk</div>
