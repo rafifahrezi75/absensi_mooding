@@ -15,8 +15,13 @@ import {
   AlertCircle,
   FileCheck2,
   UserCheck,
+  BrainCircuit,
 } from 'lucide-react';
-import { extractFeatureVector } from '@/lib/biometricEngine';
+import {
+  loadBiometricModels,
+  detectFaceWithDescriptor,
+  isBiometricModelsLoaded,
+} from '@/lib/biometricEngine';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -33,6 +38,7 @@ export function EmployeesPage() {
   const [consentChecked, setConsentChecked] = useState<boolean>(false);
   const [poseLabel, setPoseLabel] = useState<string>('front');
   const [enrolling, setEnrolling] = useState<boolean>(false);
+  const [modelReady, setModelReady] = useState<boolean>(false);
 
   const [pinModalOpen, setPinModalOpen] = useState<boolean>(false);
   const [newPin, setNewPin] = useState<string>('');
@@ -41,10 +47,12 @@ export function EmployeesPage() {
   const [syncingMaster, setSyncingMaster] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     fetchEmployees();
+    loadBiometricModels()
+      .then(() => setModelReady(true))
+      .catch(() => {});
   }, [page, filterBio]);
 
   const fetchEmployees = async () => {
@@ -89,6 +97,10 @@ export function EmployeesPage() {
     setPoseLabel('front');
     setEnrollModalOpen(true);
 
+    if (!isBiometricModelsLoaded()) {
+      loadBiometricModels().then(() => setModelReady(true));
+    }
+
     setTimeout(() => {
       startCamera();
     }, 200);
@@ -127,20 +139,29 @@ export function EmployeesPage() {
       toast.error('Wajib mencentang persetujuan pemrosesan biometrik (UU PDP)');
       return;
     }
-    if (!videoRef.current || !canvasRef.current || !selectedEmployee) return;
+    if (!videoRef.current || !selectedEmployee) return;
 
     setEnrolling(true);
     try {
-      const vector = extractFeatureVector(videoRef.current, canvasRef.current);
+      if (!isBiometricModelsLoaded()) {
+        await loadBiometricModels();
+      }
+
+      const detection = await detectFaceWithDescriptor(videoRef.current);
+      if (!detection || !detection.descriptor || detection.descriptor.length === 0) {
+        toast.error('Wajah tidak terdeteksi. Posisikan wajah tepat di depan kamera.');
+        setEnrolling(false);
+        return;
+      }
 
       const res = await axios.post(`/api/hrd/employees/${selectedEmployee.id}/enroll-face`, {
-        embedding_vector: vector,
+        embedding_vector: detection.descriptor,
         pose_label: poseLabel,
         consent_given: true,
       });
 
       if (res.data.success) {
-        toast.success(`Wajah ${selectedEmployee.nama_karyawan} berhasil didaftarkan`);
+        toast.success(`Wajah ${selectedEmployee.nama_karyawan} berhasil didaftarkan dengan model ResNet`);
         closeEnrollModal();
         fetchEmployees();
       }
@@ -185,7 +206,7 @@ export function EmployeesPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Karyawan & Biometrik</h1>
             <p className="text-xs text-muted-foreground">
-              Manajemen pendaftaran vektor wajah terpusat, kepatuhan privasi (UU PDP), dan PIN darurat.
+              Pendaftaran vektor wajah terpusat menggunakan Deep Neural Network (ResNet-34) dengan akurasi tinggi.
             </p>
           </div>
 
@@ -311,7 +332,7 @@ export function EmployeesPage() {
                           {emp.has_biometric ? (
                             <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
                               <CheckCircle2 className="h-3 w-3" />
-                              <span>{emp.embeddings_count} Vektor Aktif</span>
+                              <span>{emp.embeddings_count} Vektor ResNet</span>
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="gap-1 bg-muted text-muted-foreground border-border">
@@ -395,7 +416,7 @@ export function EmployeesPage() {
               <span>Pendaftaran Wajah: {selectedEmployee?.nama_karyawan}</span>
             </DialogTitle>
             <DialogDescription>
-              Arahkan wajah karyawan tegak ke kamera. Foto mentah tidak disimpan, hanya vektor numerik (128 dimensi) yang direkam secara permanen demi kepatuhan UU PDP.
+              Arahkan wajah karyawan tegak ke kamera. Model AI ResNet-34 mengekstraksi 128 vektor biometrik unik tanpa menyimpan foto pendaftaran mentah (UU PDP No. 27/2022).
             </DialogDescription>
           </DialogHeader>
 
@@ -408,9 +429,15 @@ export function EmployeesPage() {
                 muted
                 className="w-full h-full object-cover transform -scale-x-100"
               />
-              <canvas ref={canvasRef} className="hidden" />
               <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                 <div className="w-48 h-60 rounded-[48%] border-2 border-primary/60 border-dashed" />
+              </div>
+
+              <div className="absolute top-2 left-2">
+                <Badge variant="outline" className="gap-1 bg-black/60 text-white border-white/20 text-[10px]">
+                  <BrainCircuit className="h-3 w-3 text-blue-400" />
+                  <span>ResNet Face Embedder</span>
+                </Badge>
               </div>
             </div>
 
@@ -456,7 +483,7 @@ export function EmployeesPage() {
                 onClick={handleCaptureAndEnroll}
               >
                 <Camera className="h-4 w-4" />
-                <span>{enrolling ? 'Merekam...' : 'Ambil & Simpan'}</span>
+                <span>{enrolling ? 'Mengekstrak AI...' : 'Ambil & Simpan Wajah'}</span>
               </Button>
             </div>
           </div>
