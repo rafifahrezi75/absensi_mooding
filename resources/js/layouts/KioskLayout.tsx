@@ -13,9 +13,16 @@ import { toast } from 'sonner';
 interface KioskLayoutProps {
   children: React.ReactNode;
   locationInfo?: any;
+  onOpenHrdModal?: () => void;
+  onCloseHrdModal?: () => void;
 }
 
-export function KioskLayout({ children, locationInfo }: KioskLayoutProps) {
+export function KioskLayout({
+  children,
+  locationInfo,
+  onOpenHrdModal,
+  onCloseHrdModal,
+}: KioskLayoutProps) {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
 
@@ -103,6 +110,18 @@ export function KioskLayout({ children, locationInfo }: KioskLayoutProps) {
     }
   };
 
+  const openHrdPinModal = () => {
+    onOpenHrdModal?.();
+    setIsPinModalOpen(true);
+  };
+
+  const closeHrdPinModal = () => {
+    setIsPinModalOpen(false);
+    setHrdPin('');
+    setPinError('');
+    onCloseHrdModal?.();
+  };
+
   const handleVerifyPin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!hrdPin) return;
@@ -117,6 +136,7 @@ export function KioskLayout({ children, locationInfo }: KioskLayoutProps) {
         toast.success('Kunci Kiosk terbuka');
         setIsPinModalOpen(false);
         setHrdPin('');
+        onOpenHrdModal?.();
         navigate('/hrd/dashboard');
       }
     } catch (err: any) {
@@ -132,7 +152,7 @@ export function KioskLayout({ children, locationInfo }: KioskLayoutProps) {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setIsPinModalOpen(true)}
+            onClick={openHrdPinModal}
             className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg hover:bg-muted transition-colors text-left focus:outline-none"
             title="Klik untuk membuka panel HRD"
           >
@@ -200,7 +220,7 @@ export function KioskLayout({ children, locationInfo }: KioskLayoutProps) {
               variant="outline"
               size="sm"
               className="gap-1.5 text-xs font-medium h-8"
-              onClick={() => setIsPinModalOpen(true)}
+              onClick={openHrdPinModal}
             >
               <Lock className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Panel HRD</span>
@@ -211,7 +231,7 @@ export function KioskLayout({ children, locationInfo }: KioskLayoutProps) {
 
       <main className="flex-1 flex flex-col">{children}</main>
 
-      <Dialog open={isPinModalOpen} onOpenChange={setIsPinModalOpen}>
+      <Dialog open={isPinModalOpen} onOpenChange={closeHrdPinModal}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -260,11 +280,7 @@ export function KioskLayout({ children, locationInfo }: KioskLayoutProps) {
                 type="button"
                 variant="ghost"
                 className="w-1/2"
-                onClick={() => {
-                  setIsPinModalOpen(false);
-                  setHrdPin('');
-                  setPinError('');
-                }}
+                onClick={closeHrdPinModal}
               >
                 Batal
               </Button>

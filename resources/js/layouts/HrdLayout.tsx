@@ -11,7 +11,9 @@ import {
   Sun,
   Timer,
   Shield,
-  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelLeft,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -31,8 +33,20 @@ export function HrdLayout({ children }: HrdLayoutProps) {
 
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number>(120);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    const saved = localStorage.getItem('hrd_sidebar_open');
+    return saved !== null ? saved === 'true' : true;
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const toggleSidebar = () => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem('hrd_sidebar_open', String(next));
+      return next;
+    });
+  };
 
   useEffect(() => {
     const rawUser = localStorage.getItem('hrd_session_user');
@@ -114,13 +128,17 @@ export function HrdLayout({ children }: HrdLayoutProps) {
   ];
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen bg-background text-foreground overflow-x-hidden">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 border-r bg-card transition-transform duration-200 md:static md:translate-x-0 ${
-          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+        className={`fixed inset-y-0 left-0 z-40 bg-card border-r transition-all duration-300 ease-in-out md:static ${
+          mobileMenuOpen
+            ? 'translate-x-0 w-64'
+            : sidebarOpen
+            ? 'translate-x-0 w-64 md:translate-x-0'
+            : '-translate-x-full w-0 md:w-0 md:border-r-0 md:translate-x-0 overflow-hidden opacity-0 md:opacity-0'
         }`}
       >
-        <div className="flex h-full flex-col">
+        <div className="flex h-full w-64 flex-col">
           <div className="flex h-16 items-center justify-between border-b px-4">
             <Link to="/hrd/dashboard" className="flex items-center gap-2.5 font-bold text-base">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs">
@@ -134,10 +152,15 @@ export function HrdLayout({ children }: HrdLayoutProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="md:hidden"
-              onClick={() => setMobileMenuOpen(false)}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setSidebarOpen(false);
+                localStorage.setItem('hrd_sidebar_open', 'false');
+              }}
+              title="Tutup Sidebar"
             >
-              <X className="h-5 w-5" />
+              <PanelLeftClose className="h-4 w-4" />
             </Button>
           </div>
 
@@ -202,17 +225,25 @@ export function HrdLayout({ children }: HrdLayoutProps) {
         />
       )}
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 transition-all duration-300">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-card/90 px-4 md:px-6 backdrop-blur-md shadow-xs">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
             <Button
               variant="ghost"
               size="icon"
-              className="md:hidden"
-              onClick={() => setMobileMenuOpen(true)}
+              className="h-9 w-9 text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                if (window.innerWidth < 768) {
+                  setMobileMenuOpen(!mobileMenuOpen);
+                } else {
+                  toggleSidebar();
+                }
+              }}
+              title={sidebarOpen ? 'Tutup Sidebar' : 'Buka Sidebar'}
             >
-              <Menu className="h-5 w-5" />
+              {sidebarOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeftOpen className="h-5 w-5 text-primary" />}
             </Button>
+
             <div>
               <div className="text-sm font-semibold tracking-tight">Sistem Presensi Kiosk</div>
               <div className="text-xs text-muted-foreground hidden sm:block">

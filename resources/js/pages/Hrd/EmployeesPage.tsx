@@ -47,12 +47,17 @@ export function EmployeesPage() {
   const [syncingMaster, setSyncingMaster] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const enrollStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     fetchEmployees();
     loadBiometricModels()
       .then(() => setModelReady(true))
       .catch(() => {});
+
+    return () => {
+      stopCamera();
+    };
   }, [page, filterBio]);
 
   const fetchEmployees = async () => {
@@ -103,7 +108,7 @@ export function EmployeesPage() {
 
     setTimeout(() => {
       startCamera();
-    }, 200);
+    }, 250);
   };
 
   const closeEnrollModal = () => {
@@ -113,24 +118,33 @@ export function EmployeesPage() {
   };
 
   const startCamera = async () => {
+    stopCamera();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'user' },
         audio: false,
       });
+      enrollStreamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play();
+        };
       }
-    } catch (err) {
-      toast.error('Tidak dapat mengakses webcam untuk pendaftaran');
+    } catch (err: any) {
+      toast.error('Tidak dapat mengakses webcam: ' + (err.message || 'Perangkat kamera sedang digunakan'));
     }
   };
 
   const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
+    if (enrollStreamRef.current) {
+      enrollStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+      });
+      enrollStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
   };
 

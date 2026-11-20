@@ -35,6 +35,7 @@ import { toast } from 'sonner';
 
 export function KioskPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -119,6 +120,7 @@ export function KioskPage() {
   };
 
   const startCamera = async () => {
+    stopCamera();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -128,6 +130,7 @@ export function KioskPage() {
         },
         audio: false,
       });
+      streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
@@ -142,10 +145,16 @@ export function KioskPage() {
   };
 
   const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        track.stop();
+      });
+      streamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
   };
 
   useEffect(() => {
@@ -367,7 +376,11 @@ export function KioskPage() {
       : defaultButtons;
 
   return (
-    <KioskLayout locationInfo={config?.location}>
+    <KioskLayout
+      locationInfo={config?.location}
+      onOpenHrdModal={stopCamera}
+      onCloseHrdModal={startCamera}
+    >
       <div className="flex-1 flex flex-col md:flex-row p-3 md:p-6 gap-4 md:gap-6 max-w-7xl mx-auto w-full">
         <div className="flex-1 flex flex-col items-center justify-center">
           <div className="relative w-full max-w-2xl aspect-4/3 rounded-3xl overflow-hidden bg-black/95 shadow-2xl border-4 border-card">
