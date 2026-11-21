@@ -10,6 +10,7 @@ import { DashboardPage } from '@/pages/Hrd/DashboardPage';
 import { EmployeesPage } from '@/pages/Hrd/EmployeesPage';
 import { EmployeeDetailPage } from '@/pages/Hrd/EmployeeDetailPage';
 import { LogsPage } from '@/pages/Hrd/LogsPage';
+import { LogDetailPage } from '@/pages/Hrd/LogDetailPage';
 import { SettingsPage } from '@/pages/Hrd/SettingsPage';
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
           <Route path="/hrd/employees" element={<EmployeesPage />} />
           <Route path="/hrd/employees/:id" element={<EmployeeDetailPage />} />
           <Route path="/hrd/logs" element={<LogsPage />} />
+          <Route path="/hrd/logs/:id" element={<LogDetailPage />} />
           <Route path="/hrd/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/kiosk" replace />} />
         </Routes>

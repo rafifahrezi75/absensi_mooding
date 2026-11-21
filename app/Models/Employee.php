@@ -45,7 +45,16 @@ class Employee extends Model
 
     public function getProfilePhotoUrlAttribute(): ?string
     {
-        return $this->profile_photo_path ? asset('storage/' . $this->profile_photo_path) : null;
+        if ($this->profile_photo_path) {
+            return '/storage/' . $this->profile_photo_path;
+        }
+
+        $face = $this->faceEmbeddings()->where('is_active', true)->whereNotNull('photo_path')->latest()->first();
+        if ($face && $face->photo_path) {
+            return '/storage/' . $face->photo_path;
+        }
+
+        return null;
     }
 
     public function faceEmbeddings(): HasMany

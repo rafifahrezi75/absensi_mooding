@@ -32,6 +32,8 @@ import {
   Upload,
   Trash2,
   Image as ImageIcon,
+  ExternalLink,
+  FileText,
 } from 'lucide-react';
 import {
   loadBiometricModels,
@@ -792,6 +794,7 @@ export function EmployeeDetailPage() {
                           <th className="py-3 px-4">Metode & Kecocokan</th>
                           <th className="py-3 px-4">Lokasi & Device</th>
                           <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4 text-right">Audit Forensik</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y">
@@ -848,6 +851,17 @@ export function EmployeeDetailPage() {
                               <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
                                 {ev.status_label || 'Tercatat'}
                               </span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs gap-1 border-amber-500/30 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10 dark:text-amber-400 cursor-pointer"
+                                onClick={() => navigate(`/hrd/logs/${ev.id}`)}
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                Detail & Audit
+                              </Button>
                             </td>
                           </tr>
                         ))}

@@ -66,7 +66,7 @@ class KioskController extends Controller
                 'ambiguity_margin' => (float) SystemSetting::get('ambiguity_margin', (string) config('biometric.margin_threshold', 0.08)),
                 'capture_frame_count' => (int) config('biometric.capture_frame_count', 5),
                 'min_consistent_frames' => (int) config('biometric.min_consistent_frames', 4),
-                'allowed_challenges' => config('biometric.liveness.allowed_challenges', ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'OPEN_MOUTH']),
+                'allowed_challenges' => config('biometric.liveness.allowed_challenges', ['HEAD_TURN']),
                 'challenge_timeout_seconds' => (int) config('biometric.liveness.challenge_timeout_seconds', 8),
                 'passive_anti_spoof_enabled' => (bool) config('biometric.liveness.passive_anti_spoof_enabled', true),
                 'max_failed_scans' => (int) SystemSetting::get('max_failed_scans', '3'),
@@ -457,7 +457,7 @@ class KioskController extends Controller
             'message' => $statusLabel,
             'status_label' => $statusLabel,
             'recorded_time' => $recordedTime->format('H:i:s') . ' WIB',
-            'proof_photo_url' => $photoPath ? asset('storage/' . $photoPath) : null,
+            'proof_photo_url' => $photoPath ? '/storage/' . $photoPath : null,
             'employee' => [
                 'id' => $employee->id,
                 'id_karyawan' => $employee->id_karyawan,

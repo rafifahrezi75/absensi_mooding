@@ -24,6 +24,44 @@ export function isBiometricModelsLoaded(): boolean {
   return modelsLoaded;
 }
 
+export async function detectFaceFast(
+  video: HTMLVideoElement
+): Promise<{
+  detected: boolean;
+  landmarks: any;
+  box: { x: number; y: number; width: number; height: number };
+} | null> {
+  if (!modelsLoaded || !video || video.readyState < 2) {
+    return null;
+  }
+
+  const options = new faceapi.TinyFaceDetectorOptions({
+    inputSize: 320,
+    scoreThreshold: 0.35,
+  });
+
+  const detection = await faceapi
+    .detectSingleFace(video, options)
+    .withFaceLandmarks();
+
+  if (!detection) {
+    return null;
+  }
+
+  const box = detection.detection.box;
+
+  return {
+    detected: true,
+    landmarks: detection.landmarks,
+    box: {
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+    },
+  };
+}
+
 export async function detectFaceWithDescriptor(
   video: HTMLVideoElement
 ): Promise<{
@@ -82,16 +120,17 @@ export function computeEyeAspectRatio(eyePoints: any[]): number {
   return (distVertical1 + distVertical2) / (2.0 * distHorizontal);
 }
 
-export type ChallengeType = 'BLINK' | 'TURN_LEFT' | 'TURN_RIGHT' | 'OPEN_MOUTH';
+export type ChallengeType = 'HEAD_TURN' | 'TURN_LEFT' | 'TURN_RIGHT' | 'BLINK' | 'OPEN_MOUTH';
 
 export class ActiveChallengeDetector {
-  private currentChallenge: ChallengeType = 'BLINK';
+  private currentChallenge: ChallengeType = 'HEAD_TURN';
   private state: 'waiting_face' | 'prompting' | 'action_started' | 'action_completed' = 'waiting_face';
   private startTimestamp: number = 0;
   private lastVerifiedTimestamp: number = 0;
   private baselineNoseRatio: number = 0.5;
+  private baselineEar: number = 0.25;
 
-  constructor(initialChallenge: ChallengeType = 'BLINK') {
+  constructor(initialChallenge: ChallengeType = 'HEAD_TURN') {
     this.currentChallenge = initialChallenge;
   }
 
@@ -104,17 +143,16 @@ export class ActiveChallengeDetector {
     return this.currentChallenge;
   }
 
-  public pickRandomChallenge(allowed: ChallengeType[] = ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'OPEN_MOUTH']): ChallengeType {
-    const list = allowed && allowed.length > 0 ? allowed : ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'OPEN_MOUTH'];
-    const chosen = list[Math.floor(Math.random() * list.length)];
-    this.setChallenge(chosen);
-    return chosen;
+  public pickRandomChallenge(allowed: ChallengeType[] = ['HEAD_TURN']): ChallengeType {
+    this.setChallenge('HEAD_TURN');
+    return 'HEAD_TURN';
   }
 
   public reset() {
     this.state = 'waiting_face';
     this.startTimestamp = 0;
     this.lastVerifiedTimestamp = 0;
+    this.baselineNoseRatio = 0.5;
   }
 
   public update(landmarks: any): {
@@ -168,6 +206,10 @@ export class ActiveChallengeDetector {
         const jawWidth = Math.hypot(jawRight.x - jawLeft.x, jawRight.y - jawLeft.y);
         if (jawWidth > 0) {
           noseRatio = (noseTip.x - jawLeft.x) / jawWidth;
+          if (this.state === 'waiting_face' && noseRatio > 0.25 && noseRatio < 0.75) {
+            this.baselineNoseRatio = noseRatio;
+            this.state = 'prompting';
+          }
         }
 
         const lipTop = positions[62];
@@ -191,16 +233,23 @@ export class ActiveChallengeDetector {
       };
     }
 
+    if (avgEar > 0.15) {
+      this.baselineEar = this.baselineEar * 0.85 + avgEar * 0.15;
+    }
+
     if (this.currentChallenge === 'BLINK') {
+      const closedThreshold = Math.min(0.22, this.baselineEar * 0.78);
+      const reOpenThreshold = Math.max(0.18, this.baselineEar * 0.84);
+
       if (this.state === 'waiting_face' || this.state === 'prompting') {
-        if (avgEar < 0.20) {
+        if (avgEar <= closedThreshold) {
           this.state = 'action_started';
           this.startTimestamp = now;
           return {
             verified: false,
             stage: 'action_started',
-            text: 'Mata Tertutup...',
-            subtext: 'Buka mata kembali untuk menyelesaikan verifikasi',
+            text: 'Mata Berkedip...',
+            subtext: 'Buka mata untuk menyelesaikan verifikasi',
             badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
             borderClass: 'border-amber-400 scale-100 shadow-[0_0_25px_rgba(251,191,36,0.35)]',
           };
@@ -210,7 +259,7 @@ export class ActiveChallengeDetector {
             verified: false,
             stage: 'prompting',
             text: 'Kedipkan Mata',
-            subtext: 'Silakan kedipkan mata untuk verifikasi keaslian',
+            subtext: 'Kedipkan mata atau tahan posisi wajah sejenak',
             badgeClass: 'bg-sky-500/20 text-sky-400 border-sky-500/40 animate-pulse',
             borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
           };
@@ -219,7 +268,7 @@ export class ActiveChallengeDetector {
 
       if (this.state === 'action_started') {
         const duration = now - this.startTimestamp;
-        if (avgEar >= 0.24 && duration >= 60 && duration <= 1500) {
+        if (avgEar >= reOpenThreshold && duration >= 30 && duration <= 2000) {
           this.state = 'action_completed';
           this.lastVerifiedTimestamp = now;
           return {
@@ -237,7 +286,7 @@ export class ActiveChallengeDetector {
         return {
           verified: false,
           stage: 'action_started',
-          text: 'Mata Tertutup...',
+          text: 'Mata Berkedip...',
           subtext: 'Buka mata kembali',
           badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
           borderClass: 'border-amber-400 scale-100',
@@ -245,45 +294,28 @@ export class ActiveChallengeDetector {
       }
     }
 
-    if (this.currentChallenge === 'TURN_LEFT') {
-      if (noseRatio < 0.38) {
-        this.lastVerifiedTimestamp = now;
-        return {
-          verified: true,
-          stage: 'verified',
-          text: 'Tengok Kiri Terverifikasi!',
-          subtext: 'Gerakan terkonfirmasi, memproses verifikasi...',
-          badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-          borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
-        };
-      }
-      return {
-        verified: false,
-        stage: 'prompting',
-        text: 'Tengok ke Kiri',
-        subtext: 'Arahkan wajah sedikit ke kiri Anda',
-        badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
-        borderClass: 'border-indigo-400 scale-100 shadow-[0_0_25px_rgba(99,102,241,0.35)]',
-      };
-    }
+    if (this.currentChallenge === 'HEAD_TURN' || this.currentChallenge === 'TURN_LEFT' || this.currentChallenge === 'TURN_RIGHT') {
+      const isTurnedLeft = noseRatio < 0.44;
+      const isTurnedRight = noseRatio > 0.56;
+      const turnDelta = Math.abs(noseRatio - this.baselineNoseRatio);
 
-    if (this.currentChallenge === 'TURN_RIGHT') {
-      if (noseRatio > 0.62) {
+      if (isTurnedLeft || isTurnedRight || turnDelta >= 0.05) {
         this.lastVerifiedTimestamp = now;
         return {
           verified: true,
           stage: 'verified',
-          text: 'Tengok Kanan Terverifikasi!',
+          text: 'Tengok Terverifikasi!',
           subtext: 'Gerakan terkonfirmasi, memproses verifikasi...',
           badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
           borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
         };
       }
+
       return {
         verified: false,
         stage: 'prompting',
-        text: 'Tengok ke Kanan',
-        subtext: 'Arahkan wajah sedikit ke kanan Anda',
+        text: 'Tengok Kiri / Kanan',
+        subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
         badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
         borderClass: 'border-indigo-400 scale-100 shadow-[0_0_25px_rgba(99,102,241,0.35)]',
       };
@@ -328,8 +360,7 @@ export class BlinkDetector {
   private state: 'waiting_face' | 'eyes_open' | 'eyes_closed' = 'waiting_face';
   private closedTimestamp: number = 0;
   private lastBlinkTimestamp: number = 0;
-  private readonly closedEarThreshold: number = 0.20;
-  private readonly openEarThreshold: number = 0.24;
+  private baselineEar: number = 0.25;
 
   public update(landmarks: any): {
     stage: BlinkStage;
@@ -352,6 +383,13 @@ export class BlinkDetector {
       return { stage: 'no_face', avgEar: 0, blinkDetected: false };
     }
 
+    if (avgEar > 0.19) {
+      this.baselineEar = this.baselineEar * 0.8 + avgEar * 0.2;
+    }
+
+    const closedThreshold = Math.min(0.20, this.baselineEar * 0.74);
+    const openThreshold = Math.max(0.19, this.baselineEar * 0.82);
+
     const now = Date.now();
 
     if (now - this.lastBlinkTimestamp < 1500) {
@@ -359,7 +397,7 @@ export class BlinkDetector {
     }
 
     if (this.state === 'waiting_face' || this.state === 'eyes_open') {
-      if (avgEar < this.closedEarThreshold) {
+      if (avgEar <= closedThreshold) {
         this.state = 'eyes_closed';
         this.closedTimestamp = now;
         return { stage: 'eyes_closing', avgEar, blinkDetected: false };
@@ -371,8 +409,8 @@ export class BlinkDetector {
 
     if (this.state === 'eyes_closed') {
       const duration = now - this.closedTimestamp;
-      if (avgEar >= this.openEarThreshold) {
-        if (duration >= 60 && duration <= 1200) {
+      if (avgEar >= openThreshold) {
+        if (duration >= 40 && duration <= 1600) {
           this.state = 'eyes_open';
           this.lastBlinkTimestamp = now;
           return { stage: 'blink_verified', avgEar, blinkDetected: true };
@@ -699,8 +737,8 @@ export async function syncEmployeesToPythonEngine(employees: any[]): Promise<boo
 
 export async function captureBurstFrames(
   video: HTMLVideoElement,
-  count: number = 4,
-  intervalMs: number = 300
+  count: number = 3,
+  intervalMs: number = 80
 ): Promise<Blob[]> {
   const canvas = document.createElement('canvas');
   canvas.width = Math.min(video.videoWidth || 640, 640);

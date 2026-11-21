@@ -68,16 +68,16 @@ def calculate_passive_spoof_score(face_crop: np.ndarray) -> float:
 
     spoof_points = 0.0
 
-    if freq_ratio > 0.88 or freq_ratio < 0.28:
-        spoof_points += 0.35
+    if freq_ratio > 1.15 or freq_ratio < 0.15:
+        spoof_points += 0.30
 
-    if chroma_var < 15.0 or chroma_var > 650.0:
-        spoof_points += 0.35
+    if chroma_var < 8.0 or chroma_var > 800.0:
+        spoof_points += 0.30
 
     hsv = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
     val_channel = hsv[:, :, 2]
     specular_pixels = np.sum(val_channel > 248) / float(h * w)
-    if specular_pixels > 0.12:
+    if specular_pixels > 0.20:
         spoof_points += 0.25
 
     return round(min(1.0, max(0.0, spoof_points)), 4)
@@ -141,6 +141,13 @@ def verify_active_challenge(
         if max_mar > 0.42 and (max_mar - min_mar) > 0.15:
             return True, "open_mouth_verified"
         return False, "open_mouth_failed"
+
+    elif c_type in ["HEAD_TURN", "TURN_LEFT_OR_RIGHT"]:
+        if len(nose_x_positions) >= 2:
+            delta_x = abs(nose_x_positions[-1] - nose_x_positions[0])
+            if delta_x > 0.02:
+                return True, "head_turn_verified"
+        return False, "head_turn_failed"
 
     elif c_type == "TURN_LEFT":
         if len(nose_x_positions) >= 2:

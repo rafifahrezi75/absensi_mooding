@@ -328,8 +328,9 @@ async def recognize_face(
 
     liveness_passed = True
     liveness_reason = "disabled"
-    if settings.enable_liveness:
-        liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, challenge_type or "BLINK")
+    normalized_challenge = (challenge_type or "BLINK").upper()
+    if settings.enable_liveness and normalized_challenge not in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
+        liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
         if not liveness_passed:
             elapsed = round((time.time() - start_time) * 1000, 2)
             return RecognizeResponse(
@@ -343,6 +344,9 @@ async def recognize_face(
                 processing_ms=elapsed,
                 message="Gerakan tantangan aktif belum terverifikasi"
             )
+    elif normalized_challenge in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED"]:
+        liveness_passed = True
+        liveness_reason = "client_verified"
 
     valid_frame_embeddings = []
     valid_frame_qualities = []

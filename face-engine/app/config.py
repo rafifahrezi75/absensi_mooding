@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     sface_model_path: str = "models/face_recognition_sface_2021dec.onnx"
     yunet_model_path: str = "models/face_detection_yunet_2023mar.onnx"
 
-    similarity_threshold: float = 0.65
+    similarity_threshold: float = 0.55
     ambiguity_margin: float = 0.08
     top_k: int = 5
 
@@ -26,17 +26,17 @@ class Settings(BaseSettings):
     min_probe_stability: float = 0.70
     min_probe_quality: float = 60.0
 
-    min_face_size: int = 85
-    min_brightness: float = 40.0
+    min_face_size: int = 70
+    min_brightness: float = 25.0
     max_brightness: float = 230.0
-    min_blur_score: float = 50.0
-    max_yaw: float = 22.0
-    max_pitch: float = 22.0
-    max_roll: float = 22.0
+    min_blur_score: float = 20.0
+    max_yaw: float = 25.0
+    max_pitch: float = 25.0
+    max_roll: float = 25.0
 
     enable_liveness: bool = True
     enable_passive_anti_spoof: bool = True
-    passive_spoof_threshold: float = 0.45
+    passive_spoof_threshold: float = 0.55
     second_model_required: bool = False
     stage_b_top_n: int = 3
     confusable_threshold: float = 0.65

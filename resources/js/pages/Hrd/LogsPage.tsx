@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { HrdLayout } from '@/layouts/HrdLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   ClipboardList,
   Search,
@@ -17,11 +17,13 @@ import {
   KeyRound,
   ScanFace,
   RotateCcw,
+  FileText,
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
 
 export function LogsPage() {
+  const navigate = useNavigate();
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [page, setPage] = useState<number>(1);
@@ -34,9 +36,6 @@ export function LogsPage() {
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [anomalyOnly, setAnomalyOnly] = useState<boolean>(false);
 
-  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
-  const [previewEvent, setPreviewEvent] = useState<any>(null);
-
   useEffect(() => {
     fetchLogs();
   }, [page, attendanceType, authMethod, syncStatus, anomalyOnly]);
@@ -44,7 +43,7 @@ export function LogsPage() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const params: any = { page };
+      const params: any = { page, per_page: 10 };
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
       if (attendanceType) params.attendance_type = attendanceType;
@@ -78,16 +77,6 @@ export function LogsPage() {
     } catch (err) {
       toast.error('Gagal sinkron ulang');
     }
-  };
-
-  const openProofModal = (ev: any) => {
-    setPreviewEvent(ev);
-    setPreviewPhotoUrl(ev.proof_photo_url);
-  };
-
-  const closeProofModal = () => {
-    setPreviewEvent(null);
-    setPreviewPhotoUrl(null);
   };
 
   const formatAttendanceType = (type: string) => {
@@ -339,12 +328,22 @@ export function LogsPage() {
                                   variant="outline"
                                   size="sm"
                                   className="h-7 text-xs gap-1 px-2 border-amber-500/30 text-amber-600 hover:bg-amber-500/10"
-                                  onClick={() => openProofModal(ev)}
+                                  onClick={() => navigate(`/hrd/logs/${ev.id}`)}
                                 >
                                   <ImageIcon className="h-3 w-3" />
                                   <span>Foto Bukti</span>
                                 </Button>
-                              ) : null}
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs gap-1 px-2 text-muted-foreground hover:text-foreground"
+                                  onClick={() => navigate(`/hrd/logs/${ev.id}`)}
+                                >
+                                  <FileText className="h-3 w-3" />
+                                  <span>Detail</span>
+                                </Button>
+                              )}
 
                               {ev.sync_status !== 'synced' && (
                                 <Button
@@ -393,48 +392,6 @@ export function LogsPage() {
           </CardContent>
         </Card>
       </div>
-
-      <Dialog open={!!previewPhotoUrl} onOpenChange={closeProofModal}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ImageIcon className="h-5 w-5 text-primary" />
-              <span>Foto Bukti Kehadiran (Audit Darurat)</span>
-            </DialogTitle>
-            <DialogDescription>
-              Karyawan: {previewEvent?.nama_karyawan} ({previewEvent?.id_karyawan}) —{' '}
-              {previewEvent?.recorded_at ? new Date(previewEvent.recorded_at).toLocaleString('id-ID') : ''}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 pt-2">
-            <div className="rounded-xl overflow-hidden border bg-black aspect-4/3 flex items-center justify-center">
-              {previewPhotoUrl && (
-                <img
-                  src={previewPhotoUrl}
-                  alt="Foto Bukti Absensi"
-                  className="w-full h-full object-contain"
-                />
-              )}
-            </div>
-
-            <div className="p-3 rounded-lg border bg-muted/40 text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Idempotency Key:</span>
-                <span className="font-mono text-[11px] truncate max-w-[200px]">{previewEvent?.idempotency_key}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Metode:</span>
-                <span className="font-medium text-amber-600">Jalur Darurat (PIN)</span>
-              </div>
-            </div>
-
-            <Button type="button" variant="outline" className="w-full" onClick={closeProofModal}>
-              Tutup
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </HrdLayout>
   );
 }

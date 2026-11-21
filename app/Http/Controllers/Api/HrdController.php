@@ -185,7 +185,8 @@ class HrdController extends Controller
             $query->where('proyek_id', $proyekId);
         }
 
-        $employees = $query->orderBy('nama_karyawan', 'asc')->paginate(20);
+        $perPage = (int) $request->query('per_page', 10);
+        $employees = $query->orderBy('nama_karyawan', 'asc')->paginate($perPage);
 
         $shiftIds = $employees->pluck('shift_id')->filter()->unique();
         $shifts = ShiftSnapshot::whereIn('external_shift_id', $shiftIds)->get()->keyBy('external_shift_id');
@@ -282,7 +283,7 @@ class HrdController extends Controller
                 'auth_method' => $ev->auth_method,
                 'confidence_score' => $ev->confidence_score !== null ? round((float)$ev->confidence_score * 100, 1) : null,
                 'liveness_passed' => (bool)$ev->liveness_passed,
-                'proof_photo_url' => $ev->proof_photo_path ? asset('storage/' . $ev->proof_photo_path) : null,
+                'proof_photo_url' => $ev->proof_photo_path ? '/storage/' . $ev->proof_photo_path : null,
                 'location_name' => $ev->location ? $ev->location->location_name : '-',
                 'device_name' => $ev->device ? $ev->device->device_name : '-',
                 'status_label' => $ev->main_app_status_label,
@@ -505,9 +506,16 @@ class HrdController extends Controller
             }
         }
 
-        $employee->update([
+        $updateData = [
             'biometric_consent_at' => now(),
-        ]);
+        ];
+        if (!$employee->profile_photo_path) {
+            $latestWithPhoto = collect($createdEmbeddings)->first(fn($e) => !empty($e->photo_path));
+            if ($latestWithPhoto) {
+                $updateData['profile_photo_path'] = $latestWithPhoto->photo_path;
+            }
+        }
+        $employee->update($updateData);
 
         if (!empty($vectorsToSync)) {
             try {
@@ -591,12 +599,13 @@ class HrdController extends Controller
             });
         }
 
-        $events = $query->orderBy('recorded_at', 'desc')->paginate(25);
+        $perPage = (int) $request->query('per_page', 10);
+        $events = $query->orderBy('recorded_at', 'desc')->paginate($perPage);
 
         $data = collect($events->items())->map(function ($ev) {
             $proofUrl = null;
             if ($ev->proof_photo_path) {
-                $proofUrl = asset('storage/' . $ev->proof_photo_path);
+                $proofUrl = '/storage/' . $ev->proof_photo_path;
             }
 
             return [
@@ -626,6 +635,54 @@ class HrdController extends Controller
             'current_page' => $events->currentPage(),
             'last_page' => $events->lastPage(),
             'total' => $events->total(),
+        ]);
+    }
+
+    public function showLog(Request $request, $id): JsonResponse
+    {
+        $event = AttendanceEvent::with(['employee', 'location', 'device'])->findOrFail($id);
+
+        $shift = null;
+        if ($event->shift_id) {
+            $shift = ShiftSnapshot::where('company_id', $event->company_id)
+                ->where('external_shift_id', $event->shift_id)
+                ->first();
+        }
+
+        return response()->json([
+            'event' => [
+                'id' => $event->id,
+                'idempotency_key' => $event->idempotency_key,
+                'employee_id' => $event->employee_id,
+                'id_karyawan' => $event->employee ? $event->employee->id_karyawan : '-',
+                'nama_karyawan' => $event->employee ? $event->employee->nama_karyawan : '-',
+                'nomor_induk' => $event->employee ? $event->employee->nomor_induk : '-',
+                'jabatan' => $event->employee ? $event->employee->jabatan : '-',
+                'profile_photo_url' => $event->employee ? $event->employee->profile_photo_url : null,
+                'location_name' => $event->location ? $event->location->location_name : '-',
+                'location_type' => $event->location ? $event->location->location_type : '-',
+                'device_name' => $event->device ? $event->device->device_name : '-',
+                'device_token' => $event->device ? $event->device->device_token : '-',
+                'device_mode' => $event->device_mode ?? 'kiosk',
+                'work_date' => $event->work_date ? $event->work_date->format('Y-m-d') : null,
+                'attendance_type' => $event->attendance_type,
+                'auth_method' => $event->auth_method,
+                'recorded_at' => Carbon::parse($event->recorded_at)->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s'),
+                'recorded_at_human' => Carbon::parse($event->recorded_at)->setTimezone(config('app.timezone'))->locale('id')->isoFormat('dddd, D MMMM YYYY • HH:mm:ss') . ' WIB',
+                'confidence_score' => $event->confidence_score !== null ? round((float)$event->confidence_score * 100, 1) : null,
+                'liveness_passed' => (bool)$event->liveness_passed,
+                'is_time_suspect' => (bool)$event->is_time_suspect,
+                'is_cross_location' => (bool)$event->is_cross_location,
+                'sync_status' => $event->sync_status,
+                'main_app_status_label' => $event->main_app_status_label,
+                'external_absensi_id' => $event->external_absensi_id,
+                'sync_attempts' => (int)$event->sync_attempts,
+                'last_sync_error' => $event->last_sync_error,
+                'synced_at' => $event->synced_at ? Carbon::parse($event->synced_at)->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s') : null,
+                'proof_photo_url' => $event->proof_photo_path ? '/storage/' . $event->proof_photo_path : null,
+                'proof_photo_path' => $event->proof_photo_path,
+                'shift_name' => $shift ? $shift->shift_name : ($event->shift_id ? 'Shift #' . $event->shift_id : '-'),
+            ],
         ]);
     }
 

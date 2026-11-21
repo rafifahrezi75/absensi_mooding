@@ -78,7 +78,7 @@ export function EmployeesPage() {
   const fetchEmployees = async () => {
     setLoading(true);
     try {
-      const params: any = { page };
+      const params: any = { page, per_page: 10 };
       if (search) params.search = search;
       if (filterBio !== 'all') params.has_biometric = filterBio;
 

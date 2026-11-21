@@ -20,7 +20,7 @@ return [
         'passive_anti_spoof_enabled' => (bool) env('FACE_PASSIVE_ANTI_SPOOF', true),
         'passive_spoof_threshold' => (float) env('FACE_PASSIVE_SPOOF_THRESHOLD', 0.45),
         'active_liveness_enabled' => (bool) env('FACE_ACTIVE_LIVENESS', true),
-        'allowed_challenges' => ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'OPEN_MOUTH'],
+        'allowed_challenges' => ['HEAD_TURN'],
         'challenge_timeout_seconds' => (int) env('FACE_CHALLENGE_TIMEOUT_SECONDS', 8),
     ],
 

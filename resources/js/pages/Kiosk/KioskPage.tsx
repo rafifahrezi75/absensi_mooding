@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import {
   loadBiometricModels,
+  detectFaceFast,
   detectFaceWithDescriptor,
   verifyLivenessFromLandmarks,
   matchFaceToEmployees,
@@ -76,16 +77,16 @@ export function KioskPage() {
     badgeClass: string;
     borderClass: string;
   }>({
-    text: 'Posisikan Wajah',
-    subtext: 'Arahkan wajah ke dalam lingkaran panduan',
-    badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+    text: 'Tengok Kiri / Kanan',
+    subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
+    badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
     borderClass: 'border-white/30 scale-100',
   });
 
   const scanLockRef = useRef<boolean>(false);
   const isDetectingRef = useRef<boolean>(false);
   const blinkDetectorRef = useRef<BlinkDetector>(new BlinkDetector());
-  const activeDetectorRef = useRef<ActiveChallengeDetector>(new ActiveChallengeDetector('BLINK'));
+  const activeDetectorRef = useRef<ActiveChallengeDetector>(new ActiveChallengeDetector('HEAD_TURN'));
   const alignedTicksRef = useRef<number>(0);
 
   useEffect(() => {
@@ -197,13 +198,14 @@ export function KioskPage() {
     setCameraActive(false);
   };
 
-  const triggerRecognition = async (detection: any, challengeType: string = 'BLINK') => {
+  const triggerRecognition = async (detection: any, challengeType: string = 'CLIENT_VERIFIED') => {
     if (scanLockRef.current) return;
+    scanLockRef.current = true;
     setScanStatus('scanning');
 
     if (pythonEngineActive && videoRef.current) {
-      const frameCount = config?.settings?.capture_frame_count || 4;
-      const frames = await captureBurstFrames(videoRef.current, frameCount, 120);
+      const frameCount = 3;
+      const frames = await captureBurstFrames(videoRef.current, frameCount, 80);
       if (frames.length > 0) {
         const companyId = config?.location?.company_id || 1;
         const allowedCompanyIds = [companyId];
@@ -267,12 +269,18 @@ export function KioskPage() {
       }
     }
 
-    if (detection && detection.descriptor) {
+    let fallbackDescriptor = detection?.descriptor;
+    if (!fallbackDescriptor && videoRef.current) {
+      const fullDet = await detectFaceWithDescriptor(videoRef.current);
+      fallbackDescriptor = fullDet?.descriptor;
+    }
+
+    if (fallbackDescriptor) {
       const maxDist = 0.40;
       const margin = config?.settings?.ambiguity_margin || 0.08;
 
       const matchResult = matchFaceToEmployees(
-        detection.descriptor,
+        fallbackDescriptor,
         cachedEmployees,
         config?.location,
         maxDist,
@@ -301,7 +309,11 @@ export function KioskPage() {
           return next;
         });
         setScanStatus('idle');
+        scanLockRef.current = false;
       }
+    } else {
+      setScanStatus('idle');
+      scanLockRef.current = false;
     }
   };
 
@@ -325,7 +337,7 @@ export function KioskPage() {
       isDetectingRef.current = true;
 
       try {
-        const detection = await detectFaceWithDescriptor(videoRef.current);
+        const detection = await detectFaceFast(videoRef.current);
 
         if (overlayCanvasRef.current && videoRef.current) {
           const overlay = overlayCanvasRef.current;
@@ -348,12 +360,12 @@ export function KioskPage() {
           blinkDetectorRef.current.reset();
           setBlinkStage('no_face');
           setChallengeUI({
-            text: 'Posisikan Wajah',
-            subtext: 'Arahkan wajah ke dalam lingkaran panduan',
+            text: 'Tengok Kiri / Kanan',
+            subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
             badgeClass: 'bg-muted/80 text-muted-foreground border-border',
             borderClass: 'border-white/30 scale-100',
           });
-          alignedTicksRef.current = 0;
+          alignedTicksRef.current = Math.max(0, alignedTicksRef.current - 1);
           return;
         }
 
@@ -368,22 +380,22 @@ export function KioskPage() {
         const blinkResult = blinkDetectorRef.current.update(detection.landmarks);
         setBlinkStage(blinkResult.stage);
 
-        if (activeResult.verified) {
-          await triggerRecognition(detection, activeDetectorRef.current.getChallenge());
+        if (activeResult.verified || blinkResult.blinkDetected) {
+          await triggerRecognition(detection, 'CLIENT_VERIFIED');
           return;
         }
 
         alignedTicksRef.current += 1;
-        if (alignedTicksRef.current >= 20 && verifyLivenessFromLandmarks(detection.landmarks)) {
+        if (alignedTicksRef.current >= 6 && verifyLivenessFromLandmarks(detection.landmarks)) {
           alignedTicksRef.current = 0;
-          await triggerRecognition(detection, activeDetectorRef.current.getChallenge());
+          await triggerRecognition(detection, 'AUTO_STEADY');
           return;
         }
       } catch (err) {
       } finally {
         isDetectingRef.current = false;
       }
-    }, 200);
+    }, 100);
 
     return () => clearInterval(loopInterval);
   }, [cameraActive, modelReady, cachedEmployees, config, selectedType, pythonEngineActive]);
@@ -402,7 +414,6 @@ export function KioskPage() {
     isCrossLocation: boolean,
     verificationMeta?: any
   ) => {
-    if (scanLockRef.current) return;
     scanLockRef.current = true;
     setScanStatus('scanning');
 
@@ -593,12 +604,7 @@ export function KioskPage() {
               >
                 <div className="absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 bg-white/40 rounded-full" />
 
-                {challengeUI.text.includes('Tengok Kiri') && (
-                  <div className="absolute top-1/3 flex items-center justify-center text-indigo-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
-                    <ScanFace className="h-6 w-6" />
-                  </div>
-                )}
-                {challengeUI.text.includes('Tengok Kanan') && (
+                {challengeUI.text.includes('Tengok') && (
                   <div className="absolute top-1/3 flex items-center justify-center text-indigo-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
                     <ScanFace className="h-6 w-6" />
                   </div>
@@ -608,7 +614,7 @@ export function KioskPage() {
                     <Sparkles className="h-6 w-6" />
                   </div>
                 )}
-                {challengeUI.text.includes('Kedip') && (
+                {challengeUI.text.includes('Kedip') && !challengeUI.text.includes('Tengok') && (
                   <div className="absolute top-1/3 flex items-center justify-center text-sky-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-bounce">
                     <Eye className="h-6 w-6" />
                   </div>
@@ -665,7 +671,7 @@ export function KioskPage() {
                 variant="outline"
                 className="bg-black/40 text-white/90 border-white/20 backdrop-blur-md px-3 py-1 text-xs"
               >
-                {cachedEmployees.length} Wajah Terdaftar
+                {cachedEmployees.filter((e: any) => e.has_biometric || (e.embeddings && e.embeddings.length > 0)).length} Wajah Terdaftar
               </Badge>
             </div>
 

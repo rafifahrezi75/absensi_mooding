@@ -34,6 +34,7 @@ Route::prefix('hrd')->group(function () {
     Route::post('/employees/{id}/enroll-face', [HrdController::class, 'enrollFace']);
     Route::post('/employees/{id}/reset-pin', [HrdController::class, 'resetPin']);
     Route::get('/logs', [HrdController::class, 'logs']);
+    Route::get('/logs/{id}', [HrdController::class, 'showLog']);
     Route::post('/logs/{id}/retry', [HrdController::class, 'retrySync']);
     Route::post('/sync-queue', [HrdController::class, 'syncQueue']);
     Route::post('/sync-master', [HrdController::class, 'syncMaster']);

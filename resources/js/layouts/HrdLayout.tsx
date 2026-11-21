@@ -119,18 +119,18 @@ export function HrdLayout({ children }: HrdLayoutProps) {
   ];
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground overflow-x-hidden">
+    <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 bg-card border-r transition-all duration-300 ease-in-out md:static ${
+        className={`fixed inset-y-0 left-0 z-40 bg-card border-r transition-all duration-300 ease-in-out md:static md:h-screen md:shrink-0 flex flex-col ${
           mobileMenuOpen
             ? 'translate-x-0 w-64'
             : sidebarOpen
             ? 'translate-x-0 w-64 md:translate-x-0'
-            : '-translate-x-full w-0 md:w-0 md:border-r-0 md:translate-x-0 overflow-hidden opacity-0 md:opacity-0'
+            : '-translate-x-full w-0 md:w-0 md:border-r-0 overflow-hidden opacity-0'
         }`}
       >
-        <div className="flex h-full w-64 flex-col">
-          <div className="flex h-16 items-center justify-between border-b px-4">
+        <div className="flex h-full w-64 flex-col justify-between overflow-hidden">
+          <div className="flex h-16 items-center justify-between border-b px-4 shrink-0">
             <Link to="/hrd/dashboard" className="flex items-center gap-2.5 font-bold text-base">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-xs">
                 <Shield className="h-4 w-4" />
@@ -155,7 +155,7 @@ export function HrdLayout({ children }: HrdLayoutProps) {
             </Button>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+          <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1 min-h-0">
             <div className="px-3 pb-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
               Menu Utama
             </div>
@@ -180,7 +180,7 @@ export function HrdLayout({ children }: HrdLayoutProps) {
             })}
           </div>
 
-          <div className="border-t p-3 space-y-2 bg-muted/30">
+          <div className="border-t p-3 space-y-2 bg-muted/30 shrink-0 mt-auto">
             <Button
               variant="default"
               className="w-full gap-2 justify-start font-medium"
@@ -216,8 +216,8 @@ export function HrdLayout({ children }: HrdLayoutProps) {
         />
       )}
 
-      <div className="flex-1 flex flex-col min-w-0 transition-all duration-300">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-card/90 px-4 md:px-6 backdrop-blur-md shadow-xs">
+      <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden transition-all duration-300">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b bg-card/90 px-4 md:px-6 backdrop-blur-md shadow-xs z-20">
           <div className="flex items-center gap-2 md:gap-3">
             {!sidebarOpen ? (
               <Button
@@ -280,7 +280,7 @@ export function HrdLayout({ children }: HrdLayoutProps) {
           </div>
         </header>
 
-        <main className="flex-1 p-4 md:p-6 overflow-y-auto">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">{children}</main>
       </div>
     </div>
   );

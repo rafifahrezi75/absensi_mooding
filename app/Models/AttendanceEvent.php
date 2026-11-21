@@ -51,6 +51,15 @@ class AttendanceEvent extends Model
         'sync_attempts' => 'integer',
     ];
 
+    protected $appends = [
+        'proof_photo_url',
+    ];
+
+    public function getProofPhotoUrlAttribute(): ?string
+    {
+        return $this->proof_photo_path ? '/storage/' . $this->proof_photo_path : null;
+    }
+
     public function employee(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'employee_id');

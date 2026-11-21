@@ -336,6 +336,8 @@ class FaceKioskTest extends TestCase
         $emp = Employee::first();
         $this->assertNotNull($emp);
 
+        $initialEmbeddingIds = \App\Models\FaceEmbedding::where('employee_id', $emp->id)->pluck('id')->toArray();
+
         $fakeVector1 = array_fill(0, 128, 0.10);
         $fakeVector2 = array_fill(0, 128, 0.12);
 
@@ -372,7 +374,7 @@ class FaceKioskTest extends TestCase
             ]);
 
         \App\Models\FaceEmbedding::where('employee_id', $emp->id)
-            ->whereIn('pose_label', ['front', 'slight_left'])
+            ->whereNotIn('id', $initialEmbeddingIds)
             ->delete();
     }
 
@@ -380,6 +382,7 @@ class FaceKioskTest extends TestCase
     {
         $emp = Employee::first();
         $this->assertNotNull($emp);
+        $originalPhoto = $emp->profile_photo_path;
 
         $fakePhotoBase64 = 'data:image/jpeg;base64,' . base64_encode('fake-profile-photo-content');
 
@@ -409,6 +412,8 @@ class FaceKioskTest extends TestCase
 
         $emp->refresh();
         $this->assertNull($emp->profile_photo_path);
+
+        $emp->update(['profile_photo_path' => $originalPhoto]);
     }
 
     public function test_kiosk_face_engine_proxy_collision_scan(): void
