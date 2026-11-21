@@ -13,8 +13,11 @@ class HealthResponse(BaseModel):
     passive_anti_spoof_enabled: bool
     cached_employees: int
     cached_vectors: int
+    cached_secondary_vectors: int
     cached_prototypes: int
     collision_risks_calculated: int
+    vector_backend: str
+    gallery_version: str
     server_time: str
 
 class SyncEmployee(BaseModel):
@@ -31,6 +34,9 @@ class SyncEmployee(BaseModel):
 
 class SyncRequest(BaseModel):
     replace_all: bool = True
+    source_version: Optional[str] = None
+    similarity_threshold: Optional[float] = None
+    ambiguity_margin: Optional[float] = None
     employees: List[SyncEmployee]
 
 class SyncResponse(BaseModel):
@@ -39,6 +45,7 @@ class SyncResponse(BaseModel):
     total_vectors: int
     total_prototypes: int
     high_risk_count: int
+    gallery_version: str
 
 class EnrollSampleMeta(BaseModel):
     quality_score: float
@@ -63,6 +70,10 @@ class EnrollResponse(BaseModel):
     embeddings: List[List[float]]
     prototypes: List[List[float]]
     mean_embedding: List[float]
+    secondary_model_name: Optional[str] = None
+    secondary_model_version: Optional[str] = None
+    secondary_embeddings: Optional[List[List[float]]] = None
+    secondary_mean_embedding: Optional[List[float]] = None
     samples_metadata: Optional[List[EnrollSampleMeta]] = None
     collision_risk: Optional[Dict[str, Any]] = None
 
@@ -96,7 +107,9 @@ class RecognizeResponse(BaseModel):
     is_cross_location: Optional[bool] = False
     confidence_score: Optional[float] = None
     best_score: Optional[float] = None
+    top1_employee_id: Optional[int] = None
     top1_score: Optional[float] = None
+    top2_employee_id: Optional[int] = None
     top2_score: Optional[float] = None
     stage_b_score: Optional[float] = None
     second_model_score: Optional[float] = None

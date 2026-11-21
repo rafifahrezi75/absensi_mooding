@@ -8,3 +8,4 @@ opencv-python-headless==4.10.0.84
 insightface==0.7.3
 onnxruntime==1.19.2
 mediapipe==0.10.14
+faiss-cpu==1.8.0

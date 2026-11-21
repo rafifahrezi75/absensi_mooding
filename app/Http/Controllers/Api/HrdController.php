@@ -16,7 +16,6 @@ use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -33,14 +32,14 @@ class HrdController extends Controller
 
         $user = HrdUser::where('email', $validated['email'])->first();
 
-        if (!$user || !Hash::check($validated['password'], $user->password_hash)) {
+        if (! $user || ! Hash::check($validated['password'], $user->password_hash)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Email atau kata sandi salah',
             ], 401);
         }
 
-        if (!$user->is_active) {
+        if (! $user->is_active) {
             return response()->json([
                 'success' => false,
                 'message' => 'Akun HRD tidak aktif',
@@ -66,6 +65,7 @@ class HrdController extends Controller
     public function logout(Request $request): JsonResponse
     {
         session()->forget(['hrd_user_id', 'hrd_token']);
+
         return response()->json([
             'success' => true,
             'message' => 'Berhasil logout',
@@ -77,7 +77,7 @@ class HrdController extends Controller
         $userId = session('hrd_user_id');
         $user = $userId ? HrdUser::find($userId) : HrdUser::first();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
@@ -103,7 +103,7 @@ class HrdController extends Controller
 
         $hadirCount = $todayEvents->where('attendance_type', 'clock_in')->count();
         $terlambatCount = $todayEvents->where('attendance_type', 'clock_in')
-            ->filter(fn($e) => str_contains(strtolower($e->main_app_status_label ?? ''), 'terlambat'))
+            ->filter(fn ($e) => str_contains(strtolower($e->main_app_status_label ?? ''), 'terlambat'))
             ->count();
         $tepatWaktuCount = $hadirCount - $terlambatCount;
         $pulangCount = $todayEvents->where('attendance_type', 'clock_out')->count();
@@ -112,6 +112,7 @@ class HrdController extends Controller
 
         $devices = KioskDevice::with('location')->get()->map(function ($d) {
             $isOnline = $d->last_seen_at && Carbon::parse($d->last_seen_at)->diffInMinutes(now()) <= 5;
+
             return [
                 'id' => $d->id,
                 'device_name' => $d->device_name,
@@ -167,9 +168,9 @@ class HrdController extends Controller
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('nama_karyawan', 'like', "%{$search}%")
-                  ->orWhere('id_karyawan', 'like', "%{$search}%")
-                  ->orWhere('nomor_induk', 'like', "%{$search}%")
-                  ->orWhere('jabatan', 'like', "%{$search}%");
+                    ->orWhere('id_karyawan', 'like', "%{$search}%")
+                    ->orWhere('nomor_induk', 'like', "%{$search}%")
+                    ->orWhere('jabatan', 'like', "%{$search}%");
             });
         }
 
@@ -193,6 +194,7 @@ class HrdController extends Controller
 
         $items = collect($employees->items())->map(function ($emp) use ($shifts) {
             $shift = $shifts->get($emp->shift_id);
+
             return [
                 'id' => $emp->id,
                 'external_karyawan_id' => $emp->external_karyawan_id,
@@ -212,14 +214,14 @@ class HrdController extends Controller
                 'profile_photo_url' => $emp->profile_photo_url,
                 'photo_url' => $emp->profile_photo_url,
                 'biometric_consent_at' => $emp->biometric_consent_at ? $emp->biometric_consent_at->toIso8601String() : null,
-                'has_pin' => !empty($emp->pin_hash),
+                'has_pin' => ! empty($emp->pin_hash),
             ];
         });
 
         if ($hasBiometric === 'yes') {
-            $items = $items->filter(fn($i) => $i['has_biometric'])->values();
+            $items = $items->filter(fn ($i) => $i['has_biometric'])->values();
         } elseif ($hasBiometric === 'no') {
-            $items = $items->filter(fn($i) => !$i['has_biometric'])->values();
+            $items = $items->filter(fn ($i) => ! $i['has_biometric'])->values();
         }
 
         return response()->json([
@@ -238,9 +240,9 @@ class HrdController extends Controller
             },
             'attendanceEvents' => function ($q) {
                 $q->with(['location', 'device'])
-                  ->orderBy('recorded_at', 'desc')
-                  ->take(10);
-            }
+                    ->orderBy('recorded_at', 'desc')
+                    ->take(10);
+            },
         ])->findOrFail($id);
 
         $shift = null;
@@ -281,9 +283,9 @@ class HrdController extends Controller
                 'work_date' => $ev->work_date ? $ev->work_date->format('Y-m-d') : null,
                 'attendance_type' => $ev->attendance_type,
                 'auth_method' => $ev->auth_method,
-                'confidence_score' => $ev->confidence_score !== null ? round((float)$ev->confidence_score * 100, 1) : null,
-                'liveness_passed' => (bool)$ev->liveness_passed,
-                'proof_photo_url' => $ev->proof_photo_path ? '/storage/' . $ev->proof_photo_path : null,
+                'confidence_score' => $ev->confidence_score !== null ? round((float) $ev->confidence_score * 100, 1) : null,
+                'liveness_passed' => (bool) $ev->liveness_passed,
+                'proof_photo_url' => $ev->proof_photo_path ? '/storage/'.$ev->proof_photo_path : null,
                 'location_name' => $ev->location ? $ev->location->location_name : '-',
                 'device_name' => $ev->device ? $ev->device->device_name : '-',
                 'status_label' => $ev->main_app_status_label,
@@ -307,7 +309,7 @@ class HrdController extends Controller
                 'profile_photo_url' => $employee->profile_photo_url,
                 'has_biometric' => $employee->faceEmbeddings->where('is_active', true)->count() > 0,
                 'biometric_consent_at' => $employee->biometric_consent_at ? $employee->biometric_consent_at->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s') : null,
-                'has_pin' => !empty($employee->pin_hash),
+                'has_pin' => ! empty($employee->pin_hash),
                 'synced_at' => $employee->synced_at ? $employee->synced_at->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s') : null,
             ],
             'shift' => $shift ? [
@@ -317,7 +319,7 @@ class HrdController extends Controller
                 'end_time' => substr($shift->end_time, 0, 5),
                 'break_start_time' => $shift->break_start_time ? substr($shift->break_start_time, 0, 5) : null,
                 'break_end_time' => $shift->break_end_time ? substr($shift->break_end_time, 0, 5) : null,
-                'is_overnight' => (bool)$shift->is_overnight,
+                'is_overnight' => (bool) $shift->is_overnight,
             ] : null,
             'location' => $location ? [
                 'id' => $location->id,
@@ -337,7 +339,7 @@ class HrdController extends Controller
             'photo_base64' => 'nullable|string',
         ]);
 
-        if (!$request->hasFile('photo') && empty($validated['photo_base64'])) {
+        if (! $request->hasFile('photo') && empty($validated['photo_base64'])) {
             return response()->json([
                 'success' => false,
                 'message' => 'File foto atau data gambar tidak ditemukan',
@@ -352,14 +354,14 @@ class HrdController extends Controller
         if ($request->hasFile('photo')) {
             $file = $request->file('photo');
             $ext = $file->getClientOriginalExtension() ?: 'jpg';
-            $fileName = 'profiles/profile_' . $employee->id . '_' . time() . '_' . Str::random(6) . '.' . $ext;
+            $fileName = 'profiles/profile_'.$employee->id.'_'.time().'_'.Str::random(6).'.'.$ext;
             Storage::disk('public')->put($fileName, file_get_contents($file->getRealPath()));
-        } elseif (!empty($validated['photo_base64'])) {
+        } elseif (! empty($validated['photo_base64'])) {
             $imageData = $validated['photo_base64'];
             if (preg_match('/^data:image\/(\w+);base64,/', $imageData, $type)) {
                 $imageData = substr($imageData, strpos($imageData, ',') + 1);
                 $type = strtolower($type[1]);
-                if (!in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
+                if (! in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
                     $type = 'jpg';
                 }
             } else {
@@ -367,7 +369,7 @@ class HrdController extends Controller
             }
             $decoded = base64_decode($imageData);
             if ($decoded !== false) {
-                $fileName = 'profiles/profile_' . $employee->id . '_' . time() . '_' . Str::random(6) . '.' . $type;
+                $fileName = 'profiles/profile_'.$employee->id.'_'.time().'_'.Str::random(6).'.'.$type;
                 Storage::disk('public')->put($fileName, $decoded);
             }
         }
@@ -414,10 +416,11 @@ class HrdController extends Controller
         $employee = Employee::findOrFail($id);
 
         $validated = $request->validate([
-            'embedding_vector' => 'nullable|array|min:64',
+            'embedding_vector' => 'required_without:templates|array|size:512',
+            'embedding_vector.*' => 'numeric',
             'pose_label' => 'nullable|in:front,slight_left,slight_right',
-            'model_name' => 'nullable|string',
-            'model_version' => 'nullable|string',
+            'model_name' => 'nullable|in:buffalo_s',
+            'model_version' => 'nullable|string|max:100',
             'quality_score' => 'nullable|numeric',
             'blur_score' => 'nullable|numeric',
             'brightness_score' => 'nullable|numeric',
@@ -426,8 +429,11 @@ class HrdController extends Controller
             'pose_roll' => 'nullable|numeric',
             'consent_given' => 'required|boolean|accepted',
             'photo_base64' => 'nullable|string',
-            'templates' => 'nullable|array',
-            'templates.*.embedding_vector' => 'required_with:templates|array|min:64',
+            'templates' => 'required_without:embedding_vector|array|min:1|max:10',
+            'templates.*.embedding_vector' => 'required_with:templates|array|min:128|max:512',
+            'templates.*.embedding_vector.*' => 'numeric',
+            'templates.*.model_name' => 'required_with:templates|in:buffalo_s,sface',
+            'templates.*.model_version' => 'required_with:templates|string|max:100',
             'templates.*.pose_label' => 'nullable|in:front,slight_left,slight_right',
             'templates.*.photo_base64' => 'nullable|string',
             'templates.*.quality_score' => 'nullable|numeric',
@@ -446,9 +452,9 @@ class HrdController extends Controller
         $vectorsToSync = [];
 
         $templateItems = [];
-        if (!empty($validated['templates']) && is_array($validated['templates'])) {
+        if (! empty($validated['templates']) && is_array($validated['templates'])) {
             $templateItems = $validated['templates'];
-        } elseif (!empty($validated['embedding_vector'])) {
+        } elseif (! empty($validated['embedding_vector'])) {
             $templateItems[] = [
                 'embedding_vector' => $validated['embedding_vector'],
                 'pose_label' => $validated['pose_label'] ?? 'front',
@@ -462,14 +468,31 @@ class HrdController extends Controller
             ];
         }
 
+        foreach ($templateItems as $index => $templateItem) {
+            $templateModelName = strtolower($templateItem['model_name'] ?? $modelName);
+            $expectedDimension = $templateModelName === 'sface' ? 128 : 512;
+            if (count($templateItem['embedding_vector']) !== $expectedDimension) {
+                return response()->json([
+                    'message' => 'Dimensi embedding tidak sesuai dengan model biometrik',
+                    'errors' => [
+                        "templates.{$index}.embedding_vector" => [
+                            "Model {$templateModelName} wajib memiliki {$expectedDimension} elemen.",
+                        ],
+                    ],
+                ], 422);
+            }
+        }
+
         foreach ($templateItems as $tmpl) {
+            $templateModelName = strtolower($tmpl['model_name'] ?? $modelName);
+            $templateModelVersion = $tmpl['model_version'] ?? $modelVersion;
             $photoPath = null;
-            if (!empty($tmpl['photo_base64'])) {
+            if (! empty($tmpl['photo_base64'])) {
                 $imageData = $tmpl['photo_base64'];
                 if (preg_match('/^data:image\/(\w+);base64,/', $imageData, $type)) {
                     $imageData = substr($imageData, strpos($imageData, ',') + 1);
                     $type = strtolower($type[1]);
-                    if (!in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
+                    if (! in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
                         $type = 'jpg';
                     }
                 } else {
@@ -477,7 +500,7 @@ class HrdController extends Controller
                 }
                 $decoded = base64_decode($imageData);
                 if ($decoded !== false) {
-                    $fileName = 'faces/face_' . $employee->id . '_' . time() . '_' . Str::random(6) . '.' . $type;
+                    $fileName = 'faces/face_'.$employee->id.'_'.time().'_'.Str::random(6).'.'.$type;
                     Storage::disk('public')->put($fileName, $decoded);
                     $photoPath = $fileName;
                 }
@@ -486,8 +509,8 @@ class HrdController extends Controller
             $embedding = FaceEmbedding::create([
                 'employee_id' => $employee->id,
                 'embedding_vector' => json_encode($tmpl['embedding_vector']),
-                'model_name' => $modelName,
-                'model_version' => $modelVersion,
+                'model_name' => $templateModelName,
+                'model_version' => $templateModelVersion,
                 'pose_label' => $tmpl['pose_label'] ?? 'front',
                 'quality_score' => $tmpl['quality_score'] ?? null,
                 'blur_score' => $tmpl['blur_score'] ?? null,
@@ -501,42 +524,69 @@ class HrdController extends Controller
             ]);
 
             $createdEmbeddings[] = $embedding;
-            if (count($tmpl['embedding_vector']) === 512) {
-                $vectorsToSync[] = $tmpl['embedding_vector'];
-            }
         }
 
         $updateData = [
             'biometric_consent_at' => now(),
         ];
-        if (!$employee->profile_photo_path) {
-            $latestWithPhoto = collect($createdEmbeddings)->first(fn($e) => !empty($e->photo_path));
+        if (! $employee->profile_photo_path) {
+            $latestWithPhoto = collect($createdEmbeddings)->first(fn ($e) => ! empty($e->photo_path));
             if ($latestWithPhoto) {
                 $updateData['profile_photo_path'] = $latestWithPhoto->photo_path;
             }
         }
         $employee->update($updateData);
 
-        if (!empty($vectorsToSync)) {
+        $vectorsToSync = $employee->faceEmbeddings()
+            ->where('is_active', true)
+            ->get()
+            ->map(function (FaceEmbedding $embedding): ?array {
+                $vector = json_decode($embedding->embedding_vector, true);
+                $modelName = strtolower($embedding->model_name ?: config('biometric.model.name', 'buffalo_s'));
+                $expectedDimension = $modelName === 'sface' ? 128 : 512;
+
+                if (! is_array($vector) || count($vector) !== $expectedDimension) {
+                    return null;
+                }
+
+                return [
+                    'vector' => $vector,
+                    'model_name' => $modelName,
+                    'model_version' => $embedding->model_version,
+                    'pose_label' => $embedding->pose_label,
+                    'quality_score' => $embedding->quality_score ?? 100.0,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+
+        if (! empty($vectorsToSync)) {
             try {
-                Http::timeout(1)->post('http://127.0.0.1:8005/api/v1/cache/sync', [
-                    'replace_all' => false,
-                    'employees' => [
-                        [
-                            'employee_id' => $employee->id,
-                            'external_karyawan_id' => $employee->id,
-                            'company_id' => $employee->company_id,
-                            'entitasshelter_id' => $employee->entitasshelter_id,
-                            'cabang_id' => $employee->cabang_id,
-                            'proyek_id' => $employee->proyek_id,
-                            'id_karyawan' => $employee->id_karyawan,
-                            'id_absensi' => $employee->id_absensi,
-                            'nama_karyawan' => $employee->nama_karyawan,
-                            'embeddings' => $vectorsToSync,
-                        ]
-                    ]
-                ]);
-            } catch (\Throwable $e) {}
+                Http::withHeaders([
+                    'X-Biometric-Secret' => (string) config('biometric.shared_secret'),
+                ])->connectTimeout(1)->timeout(10)->post(
+                    rtrim((string) config('biometric.engine_url'), '/').'/api/v1/cache/sync',
+                    [
+                        'replace_all' => false,
+                        'employees' => [
+                            [
+                                'employee_id' => $employee->id,
+                                'external_karyawan_id' => $employee->id,
+                                'company_id' => $employee->company_id,
+                                'entitasshelter_id' => $employee->entitasshelter_id,
+                                'cabang_id' => $employee->cabang_id,
+                                'proyek_id' => $employee->proyek_id,
+                                'id_karyawan' => $employee->id_karyawan,
+                                'id_absensi' => $employee->id_absensi,
+                                'nama_karyawan' => $employee->nama_karyawan,
+                                'embeddings' => $vectorsToSync,
+                            ],
+                        ],
+                    ])->throw();
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
         }
 
         $firstEmbedding = $createdEmbeddings[0] ?? null;
@@ -592,10 +642,10 @@ class HrdController extends Controller
         if ($request->query('anomaly') === 'true') {
             $query->where(function ($q) {
                 $q->where('is_time_suspect', true)
-                  ->orWhere('is_cross_location', true)
-                  ->orWhere('sync_status', 'period_locked')
-                  ->orWhere('sync_status', 'manual_override_conflict')
-                  ->orWhere('auth_method', 'fallback_pin');
+                    ->orWhere('is_cross_location', true)
+                    ->orWhere('sync_status', 'period_locked')
+                    ->orWhere('sync_status', 'manual_override_conflict')
+                    ->orWhere('auth_method', 'fallback_pin');
             });
         }
 
@@ -605,7 +655,7 @@ class HrdController extends Controller
         $data = collect($events->items())->map(function ($ev) {
             $proofUrl = null;
             if ($ev->proof_photo_path) {
-                $proofUrl = '/storage/' . $ev->proof_photo_path;
+                $proofUrl = '/storage/'.$ev->proof_photo_path;
             }
 
             return [
@@ -668,20 +718,20 @@ class HrdController extends Controller
                 'attendance_type' => $event->attendance_type,
                 'auth_method' => $event->auth_method,
                 'recorded_at' => Carbon::parse($event->recorded_at)->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s'),
-                'recorded_at_human' => Carbon::parse($event->recorded_at)->setTimezone(config('app.timezone'))->locale('id')->isoFormat('dddd, D MMMM YYYY • HH:mm:ss') . ' WIB',
-                'confidence_score' => $event->confidence_score !== null ? round((float)$event->confidence_score * 100, 1) : null,
-                'liveness_passed' => (bool)$event->liveness_passed,
-                'is_time_suspect' => (bool)$event->is_time_suspect,
-                'is_cross_location' => (bool)$event->is_cross_location,
+                'recorded_at_human' => Carbon::parse($event->recorded_at)->setTimezone(config('app.timezone'))->locale('id')->isoFormat('dddd, D MMMM YYYY • HH:mm:ss').' WIB',
+                'confidence_score' => $event->confidence_score !== null ? round((float) $event->confidence_score * 100, 1) : null,
+                'liveness_passed' => (bool) $event->liveness_passed,
+                'is_time_suspect' => (bool) $event->is_time_suspect,
+                'is_cross_location' => (bool) $event->is_cross_location,
                 'sync_status' => $event->sync_status,
                 'main_app_status_label' => $event->main_app_status_label,
                 'external_absensi_id' => $event->external_absensi_id,
-                'sync_attempts' => (int)$event->sync_attempts,
+                'sync_attempts' => (int) $event->sync_attempts,
                 'last_sync_error' => $event->last_sync_error,
                 'synced_at' => $event->synced_at ? Carbon::parse($event->synced_at)->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s') : null,
-                'proof_photo_url' => $event->proof_photo_path ? '/storage/' . $event->proof_photo_path : null,
+                'proof_photo_url' => $event->proof_photo_path ? '/storage/'.$event->proof_photo_path : null,
                 'proof_photo_path' => $event->proof_photo_path,
-                'shift_name' => $shift ? $shift->shift_name : ($event->shift_id ? 'Shift #' . $event->shift_id : '-'),
+                'shift_name' => $shift ? $shift->shift_name : ($event->shift_id ? 'Shift #'.$event->shift_id : '-'),
             ],
         ]);
     }
@@ -783,14 +833,14 @@ class HrdController extends Controller
                 SystemSetting::set('main_app_integration_key', $validated['main_app_integration_key']);
             }
 
-            if (!empty($validated['buttons'])) {
+            if (! empty($validated['buttons'])) {
                 foreach ($validated['buttons'] as $btn) {
                     if (isset($btn['id'])) {
                         AttendanceButtonConfig::where('id', $btn['id'])->update([
                             'label' => $btn['label'] ?? '',
                             'is_enabled' => $btn['is_enabled'] ?? true,
-                            'auto_highlight_start' => !empty($btn['auto_highlight_start']) ? $btn['auto_highlight_start'] : null,
-                            'auto_highlight_end' => !empty($btn['auto_highlight_end']) ? $btn['auto_highlight_end'] : null,
+                            'auto_highlight_start' => ! empty($btn['auto_highlight_start']) ? $btn['auto_highlight_start'] : null,
+                            'auto_highlight_end' => ! empty($btn['auto_highlight_end']) ? $btn['auto_highlight_end'] : null,
                             'sort_order' => $btn['sort_order'] ?? 0,
                         ]);
                     }

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 import cv2
 import numpy as np
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException
 from app.config import settings
 from app.schemas import (
     HealthResponse,
@@ -31,6 +31,14 @@ from app.collision import check_enrollment_cross_contamination
 
 router = APIRouter()
 
+
+def require_biometric_secret(x_biometric_secret: Optional[str]) -> None:
+    expected = settings.biometric_shared_secret
+    if not x_biometric_secret or not hmac.compare_digest(
+        x_biometric_secret.encode(), expected.encode()
+    ):
+        raise HTTPException(status_code=401, detail="Kunci akses biometrik tidak valid")
+
 @router.get("/health", response_model=HealthResponse)
 def health_check():
     high_risks = sum(
@@ -47,25 +55,44 @@ def health_check():
         passive_anti_spoof_enabled=settings.enable_passive_anti_spoof,
         cached_employees=len(matcher.employees),
         cached_vectors=sum(len(v) for v in matcher.employee_templates.values()),
+        cached_secondary_vectors=sum(
+            len(v) for v in matcher.employee_secondary_templates.values()
+        ),
         cached_prototypes=len(matcher.gallery.prototypes),
         collision_risks_calculated=len(matcher.identity_risks),
+        vector_backend=matcher.gallery.backend,
+        gallery_version=matcher.gallery_version,
         server_time=datetime.now().isoformat()
     )
 
 @router.post("/api/v1/cache/sync", response_model=SyncResponse)
-def cache_sync(req: SyncRequest):
+def cache_sync(
+    req: SyncRequest,
+    x_biometric_secret: Optional[str] = Header(None, alias="X-Biometric-Secret"),
+):
+    require_biometric_secret(x_biometric_secret)
     data = [emp.model_dump() for emp in req.employees]
-    result = matcher.sync(data, replace_all=req.replace_all)
+    result = matcher.sync(
+        data,
+        replace_all=req.replace_all,
+        source_version=req.source_version,
+        similarity_threshold=req.similarity_threshold,
+        ambiguity_margin=req.ambiguity_margin,
+    )
     return SyncResponse(
         status="ok",
         synced_employees=result["synced_employees"],
         total_vectors=result["total_vectors"],
         total_prototypes=result["total_prototypes"],
-        high_risk_count=result["high_risk_count"]
+        high_risk_count=result["high_risk_count"],
+        gallery_version=result["gallery_version"],
     )
 
 @router.get("/api/v1/gallery/collision-scan")
-def gallery_collision_scan():
+def gallery_collision_scan(
+    x_biometric_secret: Optional[str] = Header(None, alias="X-Biometric-Secret"),
+):
+    require_biometric_secret(x_biometric_secret)
     confusable_pairs = []
     for emp_id, risk in matcher.identity_risks.items():
         if risk.get("nearest_impostor_id"):
@@ -88,13 +115,17 @@ def gallery_collision_scan():
 @router.post("/api/v1/enroll", response_model=EnrollResponse)
 async def enroll_face(
     external_karyawan_id: int = Form(...),
-    images: List[UploadFile] = File(...)
+    images: List[UploadFile] = File(...),
+    x_biometric_secret: Optional[str] = Header(None, alias="X-Biometric-Secret"),
 ):
+    require_biometric_secret(x_biometric_secret)
     if not images or len(images) == 0:
         raise HTTPException(status_code=400, detail="Tidak ada gambar yang dikirim")
 
     embeddings = []
+    secondary_embeddings = []
     qualities = []
+    secondary_qualities = []
     samples_meta: List[EnrollSampleMeta] = []
 
     for img_file in images:
@@ -122,6 +153,11 @@ async def enroll_face(
         embeddings.append(emb)
         qualities.append(float(q_metrics["quality_score"]))
 
+        secondary_embedding = recognizer.get_sface_embedding(img_bgr, face)
+        if secondary_embedding is not None:
+            secondary_embeddings.append(secondary_embedding)
+            secondary_qualities.append(float(q_metrics["quality_score"]))
+
         samples_meta.append(EnrollSampleMeta(
             quality_score=q_metrics["quality_score"],
             blur_score=q_metrics["blur_score"],
@@ -144,6 +180,18 @@ async def enroll_face(
         )
 
     fused_mean = weighted_fusion(inlier_vectors, inlier_qualities)
+    secondary_mean = None
+    if secondary_embeddings:
+        secondary_inliers, secondary_inlier_qualities = remove_embedding_outliers(
+            secondary_embeddings,
+            secondary_qualities,
+            min_similarity=0.30,
+        )
+        if secondary_inliers:
+            secondary_mean = weighted_fusion(
+                secondary_inliers,
+                secondary_inlier_qualities,
+            )
 
     other_vectors = {}
     for other_id, protos in matcher.employee_prototypes.items():
@@ -176,14 +224,26 @@ async def enroll_face(
         embeddings=[e.tolist() for e in embeddings],
         prototypes=[fused_mean.tolist()],
         mean_embedding=fused_mean.tolist(),
+        secondary_model_name="sface" if secondary_mean is not None else None,
+        secondary_model_version="opencv_sface_2021dec" if secondary_mean is not None else None,
+        secondary_embeddings=(
+            [embedding.tolist() for embedding in secondary_embeddings]
+            if secondary_embeddings
+            else None
+        ),
+        secondary_mean_embedding=(
+            secondary_mean.tolist() if secondary_mean is not None else None
+        ),
         samples_metadata=samples_meta
     )
 
 @router.post("/api/v1/verify/claimed", response_model=ClaimedVerifyResponse)
 async def verify_claimed_identity(
     frames: List[UploadFile] = File(...),
-    claimed_employee_id: int = Form(...)
+    claimed_employee_id: int = Form(...),
+    x_biometric_secret: Optional[str] = Header(None, alias="X-Biometric-Secret"),
 ):
+    require_biometric_secret(x_biometric_secret)
     start_time = time.time()
     frames_bgr = []
     for f in frames:
@@ -248,17 +308,6 @@ async def verify_claimed_identity(
 
     elapsed = round((time.time() - start_time) * 1000, 2)
 
-    attestation_token = None
-    attestation_ts = None
-    if result["decision"] == "VERIFIED":
-        attestation_ts = int(time.time())
-        token_payload = f"{claimed_employee_id}:{attestation_ts}:VERIFIED"
-        attestation_token = hmac.new(
-            settings.biometric_shared_secret.encode(),
-            token_payload.encode(),
-            hashlib.sha256
-        ).hexdigest()
-
     return ClaimedVerifyResponse(
         status=result["status"],
         decision=result["decision"],
@@ -270,8 +319,6 @@ async def verify_claimed_identity(
         probe_stability=round(stab, 4),
         processing_ms=elapsed,
         message=result["message"],
-        attestation_token=attestation_token,
-        attestation_timestamp=attestation_ts
     )
 
 @router.post("/api/v1/recognize", response_model=RecognizeResponse)
@@ -281,8 +328,10 @@ async def recognize_face(
     allowed_company_ids: Optional[str] = Form(None),
     proyek_id: Optional[int] = Form(None),
     cabang_id: Optional[int] = Form(None),
-    challenge_type: Optional[str] = Form("BLINK")
+    challenge_type: Optional[str] = Form("BLINK"),
+    x_biometric_secret: Optional[str] = Header(None, alias="X-Biometric-Secret"),
 ):
+    require_biometric_secret(x_biometric_secret)
     start_time = time.time()
 
     if not frames:
@@ -326,10 +375,31 @@ async def recognize_face(
             message="Format gambar tidak valid"
         )
 
+    if len(frames_bgr) < settings.min_consistent_frames:
+        return RecognizeResponse(
+            status="insufficient_frames",
+            decision="RETRY",
+            reject_reason="INSUFFICIENT_CONSISTENT_FRAMES",
+            captured_frames=len(frames_bgr),
+            consistent_frames=0,
+            message="Jumlah frame wajah belum mencukupi, silakan ulangi gerakan"
+        )
+
     liveness_passed = True
     liveness_reason = "disabled"
     normalized_challenge = (challenge_type or "BLINK").upper()
-    if settings.enable_liveness and normalized_challenge not in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
+    if settings.enable_liveness:
+        if normalized_challenge in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
+            return RecognizeResponse(
+                status="liveness_failed",
+                decision="RETRY",
+                reject_reason="SERVER_LIVENESS_REQUIRED",
+                liveness_passed=False,
+                liveness_reason="untrusted_client_liveness_marker",
+                challenge_type=challenge_type,
+                captured_frames=len(frames_bgr),
+                message="Verifikasi gerakan harus dibuktikan oleh server"
+            )
         liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
         if not liveness_passed:
             elapsed = round((time.time() - start_time) * 1000, 2)
@@ -344,11 +414,9 @@ async def recognize_face(
                 processing_ms=elapsed,
                 message="Gerakan tantangan aktif belum terverifikasi"
             )
-    elif normalized_challenge in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED"]:
-        liveness_passed = True
-        liveness_reason = "client_verified"
-
     valid_frame_embeddings = []
+    valid_secondary_embeddings = []
+    valid_secondary_qualities = []
     valid_frame_qualities = []
     spoof_scores = []
     last_quality_metrics = None
@@ -391,6 +459,10 @@ async def recognize_face(
         emb = recognizer.get_embedding(face)
         valid_frame_embeddings.append(emb)
         valid_frame_qualities.append(float(q_metrics["quality_score"]))
+        secondary_embedding = recognizer.get_sface_embedding(frame, face)
+        if secondary_embedding is not None:
+            valid_secondary_embeddings.append(secondary_embedding)
+            valid_secondary_qualities.append(float(q_metrics["quality_score"]))
 
     if not valid_frame_embeddings:
         elapsed = round((time.time() - start_time) * 1000, 2)
@@ -444,6 +516,18 @@ async def recognize_face(
 
     fused_probe = weighted_fusion(inlier_vectors, inlier_qualities)
     avg_probe_qual = float(np.mean(inlier_qualities))
+    secondary_probe = None
+    if valid_secondary_embeddings:
+        secondary_inliers, secondary_inlier_qualities = remove_embedding_outliers(
+            valid_secondary_embeddings,
+            valid_secondary_qualities,
+            min_similarity=0.30,
+        )
+        if secondary_inliers:
+            secondary_probe = weighted_fusion(
+                secondary_inliers,
+                secondary_inlier_qualities,
+            )
 
     final_match = matcher.match(
         query_vector=fused_probe,
@@ -452,7 +536,8 @@ async def recognize_face(
         proyek_id=proyek_id,
         cabang_id=cabang_id,
         probe_quality=avg_probe_qual,
-        probe_stability=stability
+        probe_stability=stability,
+        secondary_probe_vector=secondary_probe,
     )
 
     elapsed = round((time.time() - start_time) * 1000, 2)
@@ -482,7 +567,9 @@ async def recognize_face(
         is_cross_location=final_match.get("is_cross_location", False),
         confidence_score=final_match.get("confidence_score"),
         best_score=final_match.get("best_score"),
+        top1_employee_id=final_match.get("top1_employee_id"),
         top1_score=final_match.get("top1_score"),
+        top2_employee_id=final_match.get("top2_employee_id"),
         top2_score=final_match.get("top2_score"),
         stage_b_score=final_match.get("stage_b_score"),
         second_model_score=final_match.get("second_model_score"),

@@ -40,3 +40,7 @@ def test_exact_identity_gallery():
 
     filtered_results = gallery.search(probe, top_identity_k=3, allowed_employee_ids=[2, 3])
     assert 1 not in [r.employee_id for r in filtered_results]
+    assert len(gallery.allowed_indexes) == 1
+
+    gallery.search(probe, top_identity_k=2, allowed_employee_ids=[3, 2])
+    assert len(gallery.allowed_indexes) == 1

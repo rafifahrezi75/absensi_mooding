@@ -11,12 +11,10 @@ import {
   CheckCircle2,
   Clock,
   Sparkles,
-  AlertCircle,
   KeyRound,
   RefreshCw,
   SunMedium,
   UserCheck,
-  BrainCircuit,
   Eye,
   EyeOff,
   ScanFace,
@@ -25,25 +23,14 @@ import {
 import {
   loadBiometricModels,
   detectFaceFast,
-  detectFaceWithDescriptor,
-  verifyLivenessFromLandmarks,
-  matchFaceToEmployees,
   assessLightingQuality,
   checkPythonEngineHealth,
-  syncEmployeesToPythonEngine,
   captureBurstFrames,
+  captureFrameBlob,
   recognizeFaceWithPython,
   ActiveChallengeDetector,
-  ChallengeType,
-  BlinkDetector,
-  BlinkStage,
-  getBlinkInstruction,
 } from '@/lib/biometricEngine';
-import {
-  cacheEmployees,
-  getCachedEmployees,
-  saveOfflineEvent,
-} from '@/lib/offlineQueue';
+import { cacheEmployees, getCachedEmployees } from '@/lib/offlineQueue';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -63,14 +50,11 @@ export function KioskPage() {
     label: 'Mendeteksi cahaya...',
   });
 
-  const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'success' | 'ambiguous'>('idle');
+  const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'success'>('idle');
   const [lastResult, setLastResult] = useState<any>(null);
   const [failedCount, setFailedCount] = useState<number>(0);
   const [pythonEngineActive, setPythonEngineActive] = useState<boolean>(false);
   const [isFallbackOpen, setIsFallbackOpen] = useState<boolean>(false);
-  const [ambiguousData, setAmbiguousData] = useState<any>(null);
-  const [digitConfirm, setDigitConfirm] = useState<string>('');
-  const [blinkStage, setBlinkStage] = useState<BlinkStage>('no_face');
   const [challengeUI, setChallengeUI] = useState<{
     text: string;
     subtext: string;
@@ -85,9 +69,9 @@ export function KioskPage() {
 
   const scanLockRef = useRef<boolean>(false);
   const isDetectingRef = useRef<boolean>(false);
-  const blinkDetectorRef = useRef<BlinkDetector>(new BlinkDetector());
   const activeDetectorRef = useRef<ActiveChallengeDetector>(new ActiveChallengeDetector('HEAD_TURN'));
-  const alignedTicksRef = useRef<number>(0);
+  const livenessFramesRef = useRef<Blob[]>([]);
+  const lastLivenessCaptureRef = useRef<number>(0);
 
   useEffect(() => {
     loadConfig();
@@ -134,17 +118,14 @@ export function KioskPage() {
 
   const loadEmployees = async () => {
     try {
-      let emps: any[] = [];
       const local = await getCachedEmployees();
       if (local && local.length > 0) {
-        emps = local;
         setCachedEmployees(local);
       }
 
       if (navigator.onLine) {
         const res = await axios.get('/api/kiosk/employees-cache');
         if (res.data.employees) {
-          emps = res.data.employees;
           setCachedEmployees(res.data.employees);
           await cacheEmployees(res.data.employees);
         }
@@ -153,9 +134,8 @@ export function KioskPage() {
       const pyStatus = await checkPythonEngineHealth();
       if (pyStatus.available) {
         setPythonEngineActive(true);
-        if (emps.length > 0) {
-          syncEmployeesToPythonEngine(emps);
-        }
+      } else {
+        setPythonEngineActive(false);
       }
     } catch (err) {}
   };
@@ -198,14 +178,22 @@ export function KioskPage() {
     setCameraActive(false);
   };
 
-  const triggerRecognition = async (detection: any, challengeType: string = 'CLIENT_VERIFIED') => {
+  const triggerRecognition = async (
+    challengeType: string,
+    challengeFrames: Blob[] = []
+  ) => {
     if (scanLockRef.current) return;
     scanLockRef.current = true;
     setScanStatus('scanning');
 
     if (pythonEngineActive && videoRef.current) {
-      const frameCount = 3;
-      const frames = await captureBurstFrames(videoRef.current, frameCount, 80);
+      const frameCount = config?.settings?.capture_frame_count || 5;
+      const bufferedFrames = challengeFrames.slice(-frameCount);
+      const missingFrameCount = Math.max(0, frameCount - bufferedFrames.length);
+      const additionalFrames = missingFrameCount > 0
+        ? await captureBurstFrames(videoRef.current, missingFrameCount, 100)
+        : [];
+      const frames = [...bufferedFrames, ...additionalFrames].slice(-frameCount);
       if (frames.length > 0) {
         const companyId = config?.location?.company_id || 1;
         const allowedCompanyIds = [companyId];
@@ -229,12 +217,14 @@ export function KioskPage() {
             recRes
           );
           return;
+        } else if (recRes.decision === 'AMBIGUOUS' || recRes.status === 'ambiguous') {
+          toast.warning(recRes.message || 'Ada lebih dari satu kandidat wajah. Gunakan jalur darurat ID dan PIN.');
+          setIsFallbackOpen(true);
+          setScanStatus('idle');
+          scanLockRef.current = false;
+          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          return;
         } else if (recRes.decision === 'RETRY') {
-          if (recRes.status === 'ambiguous') {
-            setAmbiguousData(recRes);
-            setScanStatus('ambiguous');
-            return;
-          }
           toast.warning(recRes.message || 'Wajah belum dapat dipastikan, coba lagi');
           setScanStatus('idle');
           scanLockRef.current = false;
@@ -269,52 +259,10 @@ export function KioskPage() {
       }
     }
 
-    let fallbackDescriptor = detection?.descriptor;
-    if (!fallbackDescriptor && videoRef.current) {
-      const fullDet = await detectFaceWithDescriptor(videoRef.current);
-      fallbackDescriptor = fullDet?.descriptor;
-    }
-
-    if (fallbackDescriptor) {
-      const maxDist = 0.40;
-      const margin = config?.settings?.ambiguity_margin || 0.08;
-
-      const matchResult = matchFaceToEmployees(
-        fallbackDescriptor,
-        cachedEmployees,
-        config?.location,
-        maxDist,
-        margin
-      );
-
-      if (matchResult.matched && matchResult.employee) {
-        if (matchResult.ambiguous) {
-          setAmbiguousData(matchResult);
-          setScanStatus('ambiguous');
-          return;
-        }
-
-        executeAttendanceTap(
-          matchResult.employee,
-          matchResult.confidenceScore,
-          matchResult.isCrossLocation
-        );
-      } else {
-        setFailedCount((prev) => {
-          const next = prev + 1;
-          if (next >= (config?.settings?.max_failed_scans || 3)) {
-            setIsFallbackOpen(true);
-            return 0;
-          }
-          return next;
-        });
-        setScanStatus('idle');
-        scanLockRef.current = false;
-      }
-    } else {
-      setScanStatus('idle');
-      scanLockRef.current = false;
-    }
+    toast.error('Mesin biometrik tidak tersedia. Gunakan jalur darurat ID dan PIN.');
+    setIsFallbackOpen(true);
+    setScanStatus('idle');
+    scanLockRef.current = false;
   };
 
   useEffect(() => {
@@ -357,16 +305,24 @@ export function KioskPage() {
 
         if (!detection) {
           activeDetectorRef.current.reset();
-          blinkDetectorRef.current.reset();
-          setBlinkStage('no_face');
+          livenessFramesRef.current = [];
           setChallengeUI({
             text: 'Tengok Kiri / Kanan',
             subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
             badgeClass: 'bg-muted/80 text-muted-foreground border-border',
             borderClass: 'border-white/30 scale-100',
           });
-          alignedTicksRef.current = Math.max(0, alignedTicksRef.current - 1);
           return;
+        }
+
+        const now = Date.now();
+        if (now - lastLivenessCaptureRef.current >= 120 && videoRef.current) {
+          const frame = await captureFrameBlob(videoRef.current);
+          if (frame) {
+            const frameLimit = Math.max(config?.settings?.capture_frame_count || 5, 6);
+            livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-frameLimit);
+            lastLivenessCaptureRef.current = now;
+          }
         }
 
         const activeResult = activeDetectorRef.current.update(detection.landmarks);
@@ -377,18 +333,13 @@ export function KioskPage() {
           borderClass: activeResult.borderClass,
         });
 
-        const blinkResult = blinkDetectorRef.current.update(detection.landmarks);
-        setBlinkStage(blinkResult.stage);
-
-        if (activeResult.verified || blinkResult.blinkDetected) {
-          await triggerRecognition(detection, 'CLIENT_VERIFIED');
-          return;
-        }
-
-        alignedTicksRef.current += 1;
-        if (alignedTicksRef.current >= 6 && verifyLivenessFromLandmarks(detection.landmarks)) {
-          alignedTicksRef.current = 0;
-          await triggerRecognition(detection, 'AUTO_STEADY');
+        if (activeResult.verified) {
+          const challengeFrames = [...livenessFramesRef.current];
+          livenessFramesRef.current = [];
+          await triggerRecognition(
+            activeDetectorRef.current.getChallenge(),
+            challengeFrames
+          );
           return;
         }
       } catch (err) {
@@ -472,22 +423,10 @@ export function KioskPage() {
     };
 
     if (!navigator.onLine) {
-      try {
-        await saveOfflineEvent(payload);
-        const resultDisplay = {
-          employee: {
-            nama_karyawan: employee.nama_karyawan,
-            id_karyawan: employee.id_karyawan,
-          },
-          proof_photo_url: proofPhotoBase64,
-          status_label: 'Tersimpan Offline — Akan Disinkronkan Otomatis',
-          recorded_time: now.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' }) + ' WIB',
-        };
-        showSuccessResult(resultDisplay);
-      } catch (err) {
-        scanLockRef.current = false;
-        setScanStatus('idle');
-      }
+      toast.error('Verifikasi wajah membutuhkan koneksi server. Gunakan jalur darurat ID dan PIN.');
+      setIsFallbackOpen(true);
+      scanLockRef.current = false;
+      setScanStatus('idle');
       return;
     }
 
@@ -520,34 +459,6 @@ export function KioskPage() {
     setIsFallbackOpen(true);
   };
 
-  const handleConfirmAmbiguity = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ambiguousData) return;
-
-    const cand1 = ambiguousData.employee;
-    const cand2 = ambiguousData.secondaryEmployee;
-
-    let selectedCandidate = null;
-    if (cand1 && cand1.id_karyawan.endsWith(digitConfirm)) {
-      selectedCandidate = cand1;
-    } else if (cand2 && cand2.id_karyawan.endsWith(digitConfirm)) {
-      selectedCandidate = cand2;
-    }
-
-    if (selectedCandidate) {
-      setScanStatus('idle');
-      setAmbiguousData(null);
-      setDigitConfirm('');
-      executeAttendanceTap(
-        selectedCandidate,
-        ambiguousData.confidenceScore,
-        ambiguousData.isCrossLocation
-      );
-    } else {
-      toast.error('4 digit terakhir tidak sesuai dengan kandidat wajah');
-    }
-  };
-
   const defaultButtons = [
     { attendance_type: 'clock_in', label: 'Masuk', icon: LogIn },
     { attendance_type: 'break_start', label: 'Istirahat Mulai', icon: Coffee },
@@ -567,8 +478,6 @@ export function KioskPage() {
           };
         })
       : defaultButtons;
-
-  const blinkInstruction = getBlinkInstruction(blinkStage);
 
   return (
     <KioskLayout
@@ -663,7 +572,7 @@ export function KioskPage() {
                   className="gap-1 bg-purple-500/20 text-purple-300 border-purple-500/30 backdrop-blur-md px-2.5 py-1 text-xs"
                 >
                   <ShieldCheck className="h-3 w-3" />
-                  <span>e-KYC Bank Liveness</span>
+                  <span>Server Liveness Aktif</span>
                 </Badge>
               </div>
 
@@ -713,48 +622,6 @@ export function KioskPage() {
               </div>
             )}
 
-            {scanStatus === 'ambiguous' && (
-              <div className="absolute inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-6 animate-in fade-in duration-200">
-                <Card className="w-full max-w-md p-6 bg-card text-center space-y-4">
-                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/20 text-amber-500">
-                    <AlertCircle className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold">Wajah Sangat Mirip</h3>
-                    <p className="text-xs text-muted-foreground">
-                      Sistem mendeteksi 2 karyawan dengan profil wajah serupa. Masukkan 4 digit terakhir ID Karyawan Anda untuk konfirmasi.
-                    </p>
-                  </div>
-                  <form onSubmit={handleConfirmAmbiguity} className="space-y-3">
-                    <input
-                      type="text"
-                      maxLength={4}
-                      placeholder="Contoh: 0001"
-                      value={digitConfirm}
-                      onChange={(e) => setDigitConfirm(e.target.value)}
-                      className="w-full text-center text-2xl font-mono tracking-widest border rounded-md h-12 bg-background"
-                      autoFocus
-                    />
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="w-1/2"
-                        onClick={() => {
-                          setScanStatus('idle');
-                          setAmbiguousData(null);
-                        }}
-                      >
-                        Batal
-                      </Button>
-                      <Button type="submit" className="w-1/2" disabled={digitConfirm.length < 2}>
-                        Konfirmasi
-                      </Button>
-                    </div>
-                  </form>
-                </Card>
-              </div>
-            )}
           </div>
 
           <div className="flex items-center justify-center gap-3 mt-4">
@@ -825,12 +692,12 @@ export function KioskPage() {
           <Card className="p-4 bg-muted/30 border text-xs text-muted-foreground space-y-2">
             <div className="font-semibold text-foreground flex items-center gap-1.5">
               <UserCheck className="h-4 w-4 text-primary" />
-              <span>Model AI Biometrik ResNet</span>
+              <span>Verifikasi Wajah Multi-Frame</span>
             </div>
             <ul className="space-y-1 list-disc pl-4 leading-relaxed">
-              <li>Mendeteksi 68 landmark wajah untuk liveness anti-spoofing foto/layar HP.</li>
-              <li>Ekstraksi vektor embedding 128 dimensi berakurasi tinggi (ResNet-34).</li>
-              <li>Beda orang (seperti Budi dan Rizky) terjamin tidak akan tertukar.</li>
+              <li>Memeriksa gerakan kepala dan kualitas wajah pada beberapa frame.</li>
+              <li>Mencocokkan embedding InsightFace 512 dimensi dengan verifikasi model kedua.</li>
+              <li>Hasil yang terlalu dekat dialihkan ke jalur verifikasi ID dan PIN.</li>
             </ul>
           </Card>
         </div>

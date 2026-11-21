@@ -119,3 +119,25 @@ def test_decision_engine_model_disagreement():
     decision, reason = decide(data)
     assert decision == "AMBIGUOUS"
     assert reason == "MODEL_DISAGREEMENT"
+
+
+def test_decision_engine_requires_secondary_result_for_risky_identity():
+    data = DecisionInput(
+        top1_employee_id=1,
+        top1_score=0.85,
+        top2_employee_id=2,
+        top2_score=0.50,
+        stage_b_score=0.85,
+        second_model_accept=None,
+        second_model_employee_id=None,
+        probe_quality=92.0,
+        probe_stability=0.95,
+        risk={"identity_threshold": 0.65, "requires_secondary_verification": True},
+        global_threshold=0.65,
+        margin_threshold=0.08,
+    )
+
+    decision, reason = decide(data)
+
+    assert decision == "AMBIGUOUS"
+    assert reason == "SECOND_MODEL_UNAVAILABLE"

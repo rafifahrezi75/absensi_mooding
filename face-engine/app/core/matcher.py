@@ -18,12 +18,16 @@ class FaceMatcher:
             cls._instance = super(FaceMatcher, cls).__new__(cls)
             cls._instance.employees = {}
             cls._instance.employee_templates = {}
+            cls._instance.employee_secondary_templates = {}
             cls._instance.employee_prototypes = {}
             cls._instance.identity_risks = {}
             cls._instance.gallery = ExactIdentityGallery(dimension=512)
             cls._instance.matrix = np.empty((0, 512), dtype=np.float32)
             cls._instance.matrix_ids = []
             cls._instance.gallery_version = "v3_init"
+            cls._instance.source_version = None
+            cls._instance.similarity_threshold = settings.similarity_threshold
+            cls._instance.ambiguity_margin = settings.ambiguity_margin
             cls._instance.db_path = settings.database_path
             cls._instance.init_db()
             cls._instance.load_from_db()
@@ -53,6 +57,7 @@ class FaceMatcher:
                     embedding TEXT,
                     pose_label TEXT,
                     quality_score REAL,
+                    model_name TEXT DEFAULT 'buffalo_s',
                     model_version TEXT,
                     is_outlier INTEGER DEFAULT 0,
                     is_active INTEGER DEFAULT 1
@@ -69,6 +74,12 @@ class FaceMatcher:
                     confusable_group_id INTEGER
                 )
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS gallery_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
 
             cursor.execute("PRAGMA table_info(face_embeddings)")
             columns = [row[1] for row in cursor.fetchall()]
@@ -78,6 +89,8 @@ class FaceMatcher:
                 cursor.execute("ALTER TABLE face_embeddings ADD COLUMN quality_score REAL DEFAULT 100.0")
             if "model_version" not in columns:
                 cursor.execute("ALTER TABLE face_embeddings ADD COLUMN model_version TEXT DEFAULT 'buffalo_s'")
+            if "model_name" not in columns:
+                cursor.execute("ALTER TABLE face_embeddings ADD COLUMN model_name TEXT DEFAULT 'buffalo_s'")
             if "is_outlier" not in columns:
                 cursor.execute("ALTER TABLE face_embeddings ADD COLUMN is_outlier INTEGER DEFAULT 0")
             if "is_active" not in columns:
@@ -149,18 +162,31 @@ class FaceMatcher:
         h = hashlib.sha256()
         h.update(str(len(self.employees)).encode())
         for emp_id in sorted(self.employees.keys()):
-            h.update(f"{emp_id}:{len(self.employee_templates.get(emp_id, []))}".encode())
+            h.update(
+                f"{emp_id}:{len(self.employee_templates.get(emp_id, []))}:"
+                f"{len(self.employee_secondary_templates.get(emp_id, []))}".encode()
+            )
         return "v3_" + h.hexdigest()[:12]
 
     def load_from_db(self):
         self.employees = {}
         self.employee_templates = {}
+        self.employee_secondary_templates = {}
         self.employee_prototypes = {}
         all_prototypes: List[Prototype] = []
         mean_vectors: Dict[int, np.ndarray] = {}
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
+            cursor.execute("SELECT key, value FROM gallery_metadata")
+            metadata = dict(cursor.fetchall())
+            self.source_version = metadata.get("source_version")
+            self.similarity_threshold = float(
+                metadata.get("similarity_threshold", settings.similarity_threshold)
+            )
+            self.ambiguity_margin = float(
+                metadata.get("ambiguity_margin", settings.ambiguity_margin)
+            )
             cursor.execute("SELECT employee_id, external_karyawan_id, company_id, entitasshelter_id, cabang_id, proyek_id, id_karyawan, id_absensi, nama_karyawan FROM employees")
             for row in cursor.fetchall():
                 emp = {
@@ -176,7 +202,7 @@ class FaceMatcher:
                 }
                 self.employees[row[0]] = emp
 
-            cursor.execute("SELECT external_karyawan_id, embedding, pose_label, quality_score, model_version, is_outlier, is_active FROM face_embeddings WHERE is_active = 1 AND is_outlier = 0")
+            cursor.execute("SELECT external_karyawan_id, embedding, pose_label, quality_score, model_name, model_version, is_outlier, is_active FROM face_embeddings WHERE is_active = 1 AND is_outlier = 0")
             for row in cursor.fetchall():
                 ext_id = row[0]
                 emp_id = None
@@ -190,16 +216,24 @@ class FaceMatcher:
                 if emp_id is None:
                     continue
                 vec = json.loads(row[1])
-                if len(vec) == 512 and np.all(np.isfinite(vec)):
+                model_name = (row[4] or settings.model_name).lower()
+                expected_dimension = 128 if model_name == "sface" else 512
+                if len(vec) == expected_dimension and np.all(np.isfinite(vec)):
                     t_obj = {
                         "vector": vec,
                         "pose_label": row[2],
                         "quality_score": row[3],
-                        "model_version": row[4],
-                        "is_outlier": row[5],
-                        "is_active": row[6]
+                        "model_name": model_name,
+                        "model_version": row[5],
+                        "is_outlier": row[6],
+                        "is_active": row[7]
                     }
-                    self.employee_templates.setdefault(emp_id, []).append(t_obj)
+                    template_store = (
+                        self.employee_secondary_templates
+                        if model_name == "sface"
+                        else self.employee_templates
+                    )
+                    template_store.setdefault(emp_id, []).append(t_obj)
 
         matrix_rows = []
         matrix_ids = []
@@ -224,12 +258,19 @@ class FaceMatcher:
         self.gallery.rebuild(all_prototypes, self.employee_templates)
         self.identity_risks = calculate_identity_risks(
             mean_vectors,
-            base_threshold=settings.similarity_threshold,
+            base_threshold=self.similarity_threshold,
             margin_buffer=0.05
         )
-        self.gallery_version = self.compute_gallery_version()
+        self.gallery_version = self.source_version or self.compute_gallery_version()
 
-    def sync(self, employees_data: List[Dict[str, Any]], replace_all: bool = True) -> Dict[str, Any]:
+    def sync(
+        self,
+        employees_data: List[Dict[str, Any]],
+        replace_all: bool = True,
+        source_version: Optional[str] = None,
+        similarity_threshold: Optional[float] = None,
+        ambiguity_margin: Optional[float] = None
+    ) -> Dict[str, Any]:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             if replace_all:
@@ -269,22 +310,41 @@ class FaceMatcher:
                         vec = emb.get("vector", [])
                         pose = emb.get("pose_label", "front")
                         q_score = emb.get("quality_score", 100.0)
+                        model_name = str(emb.get("model_name", settings.model_name)).lower()
                         model_v = emb.get("model_version", settings.model_name)
                     elif isinstance(emb, (list, tuple, np.ndarray)):
                         vec = emb
                         pose = "front"
                         q_score = 100.0
+                        model_name = settings.model_name
                         model_v = settings.model_name
                     else:
                         continue
 
-                    if isinstance(vec, (list, tuple, np.ndarray)) and len(vec) == 512 and np.all(np.isfinite(vec)):
+                    expected_dimension = 128 if model_name == "sface" else 512
+                    if isinstance(vec, (list, tuple, np.ndarray)) and len(vec) == expected_dimension and np.all(np.isfinite(vec)):
                         norm_arr = l2_normalize(np.array(vec, dtype=np.float32)).tolist()
                         cursor.execute("""
                             INSERT INTO face_embeddings 
-                            (external_karyawan_id, embedding, pose_label, quality_score, model_version, is_outlier, is_active)
-                            VALUES (?, ?, ?, ?, ?, 0, 1)
-                        """, (canonical_emp_id, json.dumps(norm_arr), pose, q_score, model_v))
+                            (external_karyawan_id, embedding, pose_label, quality_score, model_name, model_version, is_outlier, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, 0, 1)
+                        """, (canonical_emp_id, json.dumps(norm_arr), pose, q_score, model_name, model_v))
+
+            if source_version:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO gallery_metadata (key, value) VALUES ('source_version', ?)",
+                    (source_version,)
+                )
+            if similarity_threshold is not None:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO gallery_metadata (key, value) VALUES ('similarity_threshold', ?)",
+                    (str(similarity_threshold),)
+                )
+            if ambiguity_margin is not None:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO gallery_metadata (key, value) VALUES ('ambiguity_margin', ?)",
+                    (str(ambiguity_margin),)
+                )
 
             conn.commit()
 
@@ -296,7 +356,10 @@ class FaceMatcher:
 
         return {
             "synced_employees": len(self.employees),
-            "total_vectors": sum(len(v) for v in self.employee_templates.values()),
+            "total_vectors": (
+                sum(len(v) for v in self.employee_templates.values())
+                + sum(len(v) for v in self.employee_secondary_templates.values())
+            ),
             "total_prototypes": len(self.gallery.prototypes),
             "high_risk_count": high_risk_count,
             "gallery_version": self.gallery_version
@@ -317,7 +380,7 @@ class FaceMatcher:
                 "reject_reason": "UNSTABLE_PROBE",
                 "claimed_employee_id": claimed_employee_id,
                 "score": 0.0,
-                "threshold": settings.similarity_threshold,
+                "threshold": self.similarity_threshold,
                 "message": "Gerakan wajah tidak stabil antar frame"
             }
 
@@ -328,7 +391,7 @@ class FaceMatcher:
                 "reject_reason": "LOW_PROBE_QUALITY",
                 "claimed_employee_id": claimed_employee_id,
                 "score": 0.0,
-                "threshold": settings.similarity_threshold,
+                "threshold": self.similarity_threshold,
                 "message": "Kualitas scan wajah rendah"
             }
 
@@ -347,7 +410,7 @@ class FaceMatcher:
                 "reject_reason": "EMPLOYEE_NOT_ENROLLED",
                 "claimed_employee_id": claimed_employee_id,
                 "score": 0.0,
-                "threshold": settings.similarity_threshold,
+                "threshold": self.similarity_threshold,
                 "message": "Karyawan tidak terdaftar pada galeri biometrik"
             }
 
@@ -358,14 +421,14 @@ class FaceMatcher:
                 "reject_reason": "COMPANY_MISMATCH",
                 "claimed_employee_id": claimed_employee_id,
                 "score": 0.0,
-                "threshold": settings.similarity_threshold,
+                "threshold": self.similarity_threshold,
                 "message": "Karyawan tidak terdaftar pada perusahaan ini"
             }
 
         risk = self.identity_risks.get(claimed_employee_id, {})
         threshold = max(
-            settings.similarity_threshold,
-            float(risk.get("identity_threshold", settings.similarity_threshold))
+            self.similarity_threshold,
+            float(risk.get("identity_threshold", self.similarity_threshold))
         )
 
         active_templates = [
@@ -413,6 +476,37 @@ class FaceMatcher:
             "message": msg
         }
 
+    def match_secondary(
+        self,
+        probe_vector: np.ndarray,
+        candidate_ids: List[int]
+    ) -> Optional[Dict[str, Any]]:
+        norm_probe = l2_normalize(probe_vector)
+        scores: List[Tuple[int, float]] = []
+
+        for employee_id in candidate_ids:
+            templates = self.employee_secondary_templates.get(employee_id, [])
+            if not templates:
+                continue
+            similarities = [
+                float(np.dot(norm_probe, l2_normalize(np.asarray(template["vector"], dtype=np.float32))))
+                for template in templates
+                if template.get("is_active", 1) and not template.get("is_outlier", 0)
+            ]
+            if similarities:
+                scores.append((employee_id, max(similarities)))
+
+        if not scores:
+            return None
+
+        scores.sort(key=lambda item: item[1], reverse=True)
+        employee_id, score = scores[0]
+        return {
+            "accepted": score >= settings.sface_similarity_threshold,
+            "employee_id": employee_id,
+            "score": round(score, 4),
+        }
+
     def match(
         self,
         query_vector: np.ndarray,
@@ -422,7 +516,8 @@ class FaceMatcher:
         cabang_id: Optional[int] = None,
         probe_quality: float = 85.0,
         probe_stability: float = 0.90,
-        second_model_result: Optional[Dict[str, Any]] = None
+        second_model_result: Optional[Dict[str, Any]] = None,
+        secondary_probe_vector: Optional[np.ndarray] = None
     ) -> Dict[str, Any]:
         if len(self.gallery.prototypes) == 0:
             return {
@@ -473,6 +568,8 @@ class FaceMatcher:
             }
 
         candidate_ids = [r.employee_id for r in stage_a_results]
+        if second_model_result is None and secondary_probe_vector is not None:
+            second_model_result = self.match_secondary(secondary_probe_vector, candidate_ids)
         if second_model_result and second_model_result.get("candidate_ids"):
             for sec_id in second_model_result["candidate_ids"]:
                 if sec_id in allowed_employee_ids and sec_id not in candidate_ids:
@@ -507,7 +604,7 @@ class FaceMatcher:
                 "score": round(b_score, 4),
                 "stage_a_score": round(a_score, 4),
                 "stage_b_score": round(b_score, 4),
-                "identity_threshold": risk.get("identity_threshold", settings.similarity_threshold),
+                "identity_threshold": risk.get("identity_threshold", self.similarity_threshold),
                 "collision_risk_level": risk.get("risk_level", "LOW")
             })
 
@@ -527,12 +624,12 @@ class FaceMatcher:
             top2_risk = self.identity_risks.get(top2_id, {})
             top1_risk["top2_confusable_group_id"] = top2_risk.get("confusable_group_id")
 
-        sec_model_accept = True
-        sec_model_emp_id = top1_id
+        sec_model_accept = None
+        sec_model_emp_id = None
         sec_model_score = None
         if second_model_result:
-            sec_model_accept = second_model_result.get("accepted", True)
-            sec_model_emp_id = second_model_result.get("employee_id", top1_id)
+            sec_model_accept = second_model_result.get("accepted")
+            sec_model_emp_id = second_model_result.get("employee_id")
             sec_model_score = second_model_result.get("score")
 
         decision_input = DecisionInput(
@@ -546,8 +643,8 @@ class FaceMatcher:
             probe_quality=probe_quality,
             probe_stability=probe_stability,
             risk=top1_risk,
-            global_threshold=settings.similarity_threshold,
-            margin_threshold=settings.ambiguity_margin,
+            global_threshold=self.similarity_threshold,
+            margin_threshold=self.ambiguity_margin,
             min_quality=settings.min_probe_quality,
             min_stability=settings.min_probe_stability,
             second_model_required=settings.second_model_required

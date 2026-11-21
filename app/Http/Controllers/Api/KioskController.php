@@ -16,6 +16,7 @@ use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -25,19 +26,8 @@ class KioskController extends Controller
 {
     public function config(Request $request): JsonResponse
     {
-        $deviceToken = $request->header('X-Kiosk-Device-Token') ?? $request->query('device_token');
-
-        $device = null;
-        if ($deviceToken) {
-            $device = KioskDevice::with('location')->where('device_token', $deviceToken)->first();
-            if ($device) {
-                $device->update(['last_seen_at' => now()]);
-            }
-        }
-
-        if (!$device) {
-            $device = KioskDevice::with('location')->where('is_active', true)->first();
-        }
+        $device = $this->resolveKioskDevice($request);
+        $device?->update(['last_seen_at' => now()]);
 
         $location = $device ? $device->location : KioskLocation::first();
 
@@ -47,9 +37,9 @@ class KioskController extends Controller
                 $query->orWhere('kiosk_location_id', $location->id);
             }
         })
-        ->where('is_enabled', true)
-        ->orderBy('sort_order', 'asc')
-        ->get();
+            ->where('is_enabled', true)
+            ->orderBy('sort_order', 'asc')
+            ->get();
 
         $allLocations = KioskLocation::where('is_active', true)->get();
         $allDevices = KioskDevice::where('is_active', true)->get();
@@ -69,6 +59,7 @@ class KioskController extends Controller
                 'allowed_challenges' => config('biometric.liveness.allowed_challenges', ['HEAD_TURN']),
                 'challenge_timeout_seconds' => (int) config('biometric.liveness.challenge_timeout_seconds', 8),
                 'passive_anti_spoof_enabled' => (bool) config('biometric.liveness.passive_anti_spoof_enabled', true),
+                'active_liveness_enabled' => (bool) config('biometric.liveness.active_liveness_enabled', true),
                 'max_failed_scans' => (int) SystemSetting::get('max_failed_scans', '3'),
                 'auto_lock_seconds' => (int) SystemSetting::get('auto_lock_seconds', '120'),
             ],
@@ -106,27 +97,38 @@ class KioskController extends Controller
 
     public function employeesCache(Request $request): JsonResponse
     {
-        $employees = Employee::with(['faceEmbeddings' => function ($query) {
-            $query->where('is_active', true);
-        }])
-        ->where('status', 'aktif')
-        ->get();
+        $device = $this->resolveKioskDevice($request);
+        $companyIds = collect($device?->allowed_company_ids ?? [])
+            ->push($device?->location?->company_id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        $employees = Employee::query()
+            ->select([
+                'id',
+                'external_karyawan_id',
+                'id_karyawan',
+                'id_absensi',
+                'nama_karyawan',
+                'jabatan',
+                'company_id',
+                'cabang_id',
+                'proyek_id',
+                'shift_id',
+            ])
+            ->withCount(['faceEmbeddings as biometric_template_count' => function ($query) {
+                $query->where('is_active', true)
+                    ->where('model_name', config('biometric.model.name', 'buffalo_s'));
+            }])
+            ->where('status', 'aktif')
+            ->when($companyIds->isNotEmpty(), function ($query) use ($companyIds) {
+                $query->whereIn('company_id', $companyIds);
+            })
+            ->orderBy('id')
+            ->get();
 
         $formatted = $employees->map(function ($emp) {
-            $embeddings = $emp->faceEmbeddings->map(function ($fb) {
-                $vector = json_decode($fb->embedding_vector, true);
-                if (!is_array($vector)) {
-                    $vector = array_map('floatval', explode(',', $fb->embedding_vector));
-                }
-                return [
-                    'id' => $fb->id,
-                    'pose_label' => $fb->pose_label,
-                    'quality_score' => $fb->quality_score,
-                    'model_version' => $fb->model_version,
-                    'vector' => $vector,
-                ];
-            });
-
             return [
                 'id' => $emp->id,
                 'external_karyawan_id' => $emp->external_karyawan_id,
@@ -139,48 +141,12 @@ class KioskController extends Controller
                 'proyek_id' => $emp->proyek_id,
                 'gudang_id' => $emp->gudang_id ?? null,
                 'shift_id' => $emp->shift_id,
-                'has_biometric' => $emp->faceEmbeddings->count() > 0,
-                'embeddings' => $embeddings,
+                'has_biometric' => $emp->biometric_template_count > 0,
+                'biometric_template_count' => $emp->biometric_template_count,
             ];
         });
 
-        try {
-            $syncEmployees = [];
-            foreach ($employees as $emp) {
-                $embs512 = [];
-                foreach ($emp->faceEmbeddings as $fb) {
-                    $vec = json_decode($fb->embedding_vector, true);
-                    if (is_array($vec) && count($vec) === 512) {
-                        $embs512[] = [
-                            'vector' => $vec,
-                            'pose_label' => $fb->pose_label,
-                            'quality_score' => $fb->quality_score ?? 100.0,
-                            'model_version' => $fb->model_version,
-                        ];
-                    }
-                }
-                if (!empty($embs512)) {
-                    $syncEmployees[] = [
-                        'employee_id' => $emp->id,
-                        'external_karyawan_id' => $emp->id,
-                        'company_id' => $emp->company_id,
-                        'entitasshelter_id' => $emp->entitasshelter_id,
-                        'cabang_id' => $emp->cabang_id,
-                        'proyek_id' => $emp->proyek_id,
-                        'id_karyawan' => $emp->id_karyawan,
-                        'id_absensi' => $emp->id_absensi,
-                        'nama_karyawan' => $emp->nama_karyawan,
-                        'embeddings' => $embs512,
-                    ];
-                }
-            }
-            if (!empty($syncEmployees)) {
-                Http::timeout(1)->post('http://127.0.0.1:8005/api/v1/cache/sync', [
-                    'replace_all' => true,
-                    'employees' => $syncEmployees,
-                ]);
-            }
-        } catch (\Throwable $e) {}
+        $this->syncFaceEngineGalleryIfNeeded();
 
         return response()->json([
             'server_time' => Carbon::now()->toIso8601String(),
@@ -202,10 +168,10 @@ class KioskController extends Controller
             'is_time_suspect' => 'nullable|boolean',
             'is_cross_location' => 'nullable|boolean',
             'confidence_score' => 'nullable|numeric',
-            'liveness_passed' => 'nullable|boolean',
+            'liveness_passed' => 'required_if:auth_method,face_liveness|boolean',
             'proof_photo_base64' => 'nullable|string',
             'session_id' => 'nullable|string',
-            'decision' => 'nullable|in:VERIFIED,RETRY,UNKNOWN,SPOOF_REJECTED,QUALITY_REJECTED',
+            'decision' => 'required_if:auth_method,face_liveness|nullable|in:VERIFIED,RETRY,UNKNOWN,AMBIGUOUS,SPOOF_REJECTED,QUALITY_REJECTED',
             'reject_reason' => 'nullable|string',
             'top1_employee_id' => 'nullable|integer',
             'top1_score' => 'nullable|numeric',
@@ -265,30 +231,55 @@ class KioskController extends Controller
                 ], 422);
             }
 
-            if (!empty($validated['attestation_token'])) {
-                $sharedSecret = config('biometric.shared_secret', 'mooding_biometric_secure_secret_2026');
-                $token = $validated['attestation_token'];
-                $ts = (int) ($validated['attestation_timestamp'] ?? 0);
-                $now = time();
+            if (($validated['top1_employee_id'] ?? null) !== $validated['employee_id']) {
+                return response()->json([
+                    'status' => 'identity_mismatch',
+                    'decision' => 'RETRY',
+                    'reject_reason' => 'TOP1_EMPLOYEE_MISMATCH',
+                    'message' => 'Identitas hasil verifikasi tidak sesuai dengan data absensi',
+                ], 422);
+            }
 
-                if (abs($now - $ts) > 60) {
-                    return response()->json([
-                        'status' => 'expired_attestation',
-                        'decision' => 'RETRY',
-                        'reject_reason' => 'ATTESTATION_EXPIRED',
-                        'message' => 'Sesi verifikasi biometrik kedaluwarsa, silakan scan ulang',
-                    ], 422);
-                }
+            if (! ($validated['liveness_passed'] ?? false)) {
+                return response()->json([
+                    'status' => 'liveness_failed',
+                    'decision' => 'RETRY',
+                    'reject_reason' => 'ACTIVE_LIVENESS_REQUIRED',
+                    'message' => 'Bukti liveness wajib lolos sebelum absensi dicatat',
+                ], 422);
+            }
 
-                $expectedToken = hash_hmac('sha256', "{$validated['employee_id']}:{$ts}:VERIFIED", $sharedSecret);
-                if (!hash_equals($expectedToken, $token)) {
-                    return response()->json([
-                        'status' => 'invalid_attestation',
-                        'decision' => 'RETRY',
-                        'reject_reason' => 'ATTESTATION_SIGNATURE_INVALID',
-                        'message' => 'Bukti otentikasi biometrik tidak sah',
-                    ], 422);
-                }
+            if (empty($validated['attestation_token']) || empty($validated['attestation_timestamp'])) {
+                return response()->json([
+                    'status' => 'invalid_attestation',
+                    'decision' => 'RETRY',
+                    'reject_reason' => 'ATTESTATION_REQUIRED',
+                    'message' => 'Bukti otentikasi biometrik wajib disertakan',
+                ], 422);
+            }
+
+            $sharedSecret = config('biometric.shared_secret', 'mooding_biometric_secure_secret_2026');
+            $token = $validated['attestation_token'];
+            $ts = (int) $validated['attestation_timestamp'];
+            $now = time();
+
+            if (abs($now - $ts) > 60) {
+                return response()->json([
+                    'status' => 'expired_attestation',
+                    'decision' => 'RETRY',
+                    'reject_reason' => 'ATTESTATION_EXPIRED',
+                    'message' => 'Sesi verifikasi biometrik kedaluwarsa, silakan scan ulang',
+                ], 422);
+            }
+
+            $expectedToken = hash_hmac('sha256', "{$validated['employee_id']}:{$ts}:VERIFIED", $sharedSecret);
+            if (! hash_equals($expectedToken, $token)) {
+                return response()->json([
+                    'status' => 'invalid_attestation',
+                    'decision' => 'RETRY',
+                    'reject_reason' => 'ATTESTATION_SIGNATURE_INVALID',
+                    'message' => 'Bukti otentikasi biometrik tidak sah',
+                ], 422);
             }
 
             FaceVerificationAttempt::create([
@@ -356,10 +347,11 @@ class KioskController extends Controller
 
             if ($alreadyClockedIn) {
                 $alreadyTime = Carbon::parse($alreadyClockedIn->recorded_at)->setTimezone(config('app.timezone'));
+
                 return response()->json([
                     'status' => 'already_clocked_in',
-                    'message' => 'Sudah tercatat Masuk pukul ' . $alreadyTime->format('H:i') . ' WIB',
-                    'recorded_time' => $alreadyTime->format('H:i:s') . ' WIB',
+                    'message' => 'Sudah tercatat Masuk pukul '.$alreadyTime->format('H:i').' WIB',
+                    'recorded_time' => $alreadyTime->format('H:i:s').' WIB',
                     'employee' => [
                         'nama_karyawan' => $employee->nama_karyawan,
                         'id_karyawan' => $employee->id_karyawan,
@@ -369,14 +361,14 @@ class KioskController extends Controller
         }
 
         $recordedTime = Carbon::parse($validated['recorded_at'])->setTimezone(config('app.timezone'));
-        $statusLabel = 'Tercatat ' . $recordedTime->format('H:i') . ' WIB';
+        $statusLabel = 'Tercatat '.$recordedTime->format('H:i').' WIB';
 
         if ($validated['attendance_type'] === 'clock_in') {
             if ($shift) {
-                $shiftStart = Carbon::parse($workDate . ' ' . $shift->start_time);
+                $shiftStart = Carbon::parse($workDate.' '.$shift->start_time);
                 if ($recordedTime->greaterThan($shiftStart)) {
                     $diff = $shiftStart->diffInMinutes($recordedTime);
-                    $statusLabel = 'Masuk Berhasil — Terlambat ' . $diff . ' menit';
+                    $statusLabel = 'Masuk Berhasil — Terlambat '.$diff.' menit';
                 } else {
                     $statusLabel = 'Masuk Berhasil — Tepat Waktu';
                 }
@@ -396,12 +388,12 @@ class KioskController extends Controller
         }
 
         $photoPath = null;
-        if (!empty($validated['proof_photo_base64'])) {
+        if (! empty($validated['proof_photo_base64'])) {
             $photoData = $validated['proof_photo_base64'];
             if (preg_match('/^data:image\/(\w+);base64,/', $photoData, $type)) {
                 $photoData = substr($photoData, strpos($photoData, ',') + 1);
                 $type = strtolower($type[1]);
-                if (!in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
+                if (! in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
                     $type = 'jpg';
                 }
             } else {
@@ -409,7 +401,7 @@ class KioskController extends Controller
             }
             $photoDecoded = base64_decode($photoData);
             if ($photoDecoded !== false) {
-                $fileName = 'proofs/proof_' . Str::slug($validated['idempotency_key']) . '.' . $type;
+                $fileName = 'proofs/proof_'.Str::slug($validated['idempotency_key']).'.'.$type;
                 Storage::disk('public')->put($fileName, $photoDecoded);
                 $photoPath = $fileName;
 
@@ -456,8 +448,8 @@ class KioskController extends Controller
             'status' => 'synced',
             'message' => $statusLabel,
             'status_label' => $statusLabel,
-            'recorded_time' => $recordedTime->format('H:i:s') . ' WIB',
-            'proof_photo_url' => $photoPath ? '/storage/' . $photoPath : null,
+            'recorded_time' => $recordedTime->format('H:i:s').' WIB',
+            'proof_photo_url' => $photoPath ? '/storage/'.$photoPath : null,
             'employee' => [
                 'id' => $employee->id,
                 'id_karyawan' => $employee->id_karyawan,
@@ -483,7 +475,7 @@ class KioskController extends Controller
         ]);
 
         $employee = Employee::where('id_karyawan', $validated['id_karyawan'])->first();
-        if (!$employee) {
+        if (! $employee) {
             return response()->json([
                 'success' => false,
                 'message' => 'ID Karyawan tidak ditemukan',
@@ -497,7 +489,7 @@ class KioskController extends Controller
             ], 403);
         }
 
-        if (!$employee->pin_hash || !Hash::check($validated['pin'], $employee->pin_hash)) {
+        if (! $employee->pin_hash || ! Hash::check($validated['pin'], $employee->pin_hash)) {
             return response()->json([
                 'success' => false,
                 'message' => 'PIN salah',
@@ -512,11 +504,11 @@ class KioskController extends Controller
             $type = 'jpg';
         }
         $photoDecoded = base64_decode($photoData);
-        $fileName = 'proofs/proof_' . Str::slug($validated['idempotency_key']) . '.' . $type;
+        $fileName = 'proofs/proof_'.Str::slug($validated['idempotency_key']).'.'.$type;
         Storage::disk('public')->put($fileName, $photoDecoded);
 
         $recordedTime = Carbon::parse($validated['recorded_at'])->setTimezone(config('app.timezone'));
-        $statusLabel = 'Jalur Darurat (PIN) — ' . ucfirst(str_replace('_', ' ', $validated['attendance_type'])) . ' ' . $recordedTime->format('H:i') . ' WIB';
+        $statusLabel = 'Jalur Darurat (PIN) — '.ucfirst(str_replace('_', ' ', $validated['attendance_type'])).' '.$recordedTime->format('H:i').' WIB';
 
         $event = AttendanceEvent::create([
             'idempotency_key' => $validated['idempotency_key'],
@@ -544,7 +536,7 @@ class KioskController extends Controller
             'status' => 'synced',
             'message' => 'Absensi darurat berhasil dicatat',
             'status_label' => $statusLabel,
-            'recorded_time' => $recordedTime->format('H:i:s') . ' WIB',
+            'recorded_time' => $recordedTime->format('H:i:s').' WIB',
             'employee' => [
                 'id' => $employee->id,
                 'id_karyawan' => $employee->id_karyawan,
@@ -553,5 +545,156 @@ class KioskController extends Controller
             ],
             'event' => $event,
         ]);
+    }
+
+    private function resolveKioskDevice(Request $request): ?KioskDevice
+    {
+        $deviceToken = $request->header('X-Kiosk-Device-Token') ?? $request->query('device_token');
+
+        if ($deviceToken) {
+            $device = KioskDevice::with('location')
+                ->where('device_token', $deviceToken)
+                ->where('is_active', true)
+                ->first();
+
+            if ($device) {
+                return $device;
+            }
+        }
+
+        return KioskDevice::with('location')->where('is_active', true)->first();
+    }
+
+    private function syncFaceEngineGalleryIfNeeded(): void
+    {
+        $sourceVersion = $this->faceGallerySourceVersion();
+        $engineUrl = rtrim((string) config('biometric.engine_url'), '/');
+
+        try {
+            $health = Http::withHeaders([
+                'X-Biometric-Secret' => (string) config('biometric.shared_secret'),
+            ])->connectTimeout(1)->timeout(2)->get($engineUrl.'/health');
+            if (! $health->successful() || $health->json('gallery_version') === $sourceVersion) {
+                return;
+            }
+        } catch (\Throwable) {
+            return;
+        }
+
+        Cache::lock('face-engine-gallery-sync', 120)->get(function () use ($engineUrl, $sourceVersion): void {
+            try {
+                $engineRequest = Http::withHeaders([
+                    'X-Biometric-Secret' => (string) config('biometric.shared_secret'),
+                ]);
+                $health = $engineRequest->connectTimeout(1)->timeout(2)->get($engineUrl.'/health');
+                if ($health->successful() && $health->json('gallery_version') === $sourceVersion) {
+                    return;
+                }
+
+                $employees = Employee::query()
+                    ->select([
+                        'id',
+                        'external_karyawan_id',
+                        'company_id',
+                        'entitasshelter_id',
+                        'cabang_id',
+                        'proyek_id',
+                        'id_karyawan',
+                        'id_absensi',
+                        'nama_karyawan',
+                    ])
+                    ->with(['faceEmbeddings' => function ($query) {
+                        $query->select([
+                            'id',
+                            'employee_id',
+                            'embedding_vector',
+                            'model_name',
+                            'model_version',
+                            'pose_label',
+                            'quality_score',
+                        ])->where('is_active', true);
+                    }])
+                    ->where('status', 'aktif')
+                    ->whereHas('faceEmbeddings', function ($query) {
+                        $query->where('is_active', true);
+                    })
+                    ->orderBy('id')
+                    ->get();
+
+                $payloadEmployees = $employees->map(function (Employee $employee): array {
+                    $embeddings = $employee->faceEmbeddings
+                        ->map(function (FaceEmbedding $embedding): ?array {
+                            $vector = json_decode($embedding->embedding_vector, true);
+                            $modelName = strtolower($embedding->model_name ?: config('biometric.model.name', 'buffalo_s'));
+                            $expectedDimension = $modelName === 'sface' ? 128 : 512;
+
+                            if (! is_array($vector) || count($vector) !== $expectedDimension) {
+                                return null;
+                            }
+
+                            return [
+                                'vector' => $vector,
+                                'model_name' => $modelName,
+                                'model_version' => $embedding->model_version,
+                                'pose_label' => $embedding->pose_label,
+                                'quality_score' => $embedding->quality_score ?? 100.0,
+                            ];
+                        })
+                        ->filter()
+                        ->values()
+                        ->all();
+
+                    return [
+                        'employee_id' => $employee->id,
+                        'external_karyawan_id' => $employee->id,
+                        'company_id' => $employee->company_id,
+                        'entitasshelter_id' => $employee->entitasshelter_id,
+                        'cabang_id' => $employee->cabang_id,
+                        'proyek_id' => $employee->proyek_id,
+                        'id_karyawan' => $employee->id_karyawan,
+                        'id_absensi' => $employee->id_absensi,
+                        'nama_karyawan' => $employee->nama_karyawan,
+                        'embeddings' => $embeddings,
+                    ];
+                })->filter(fn (array $employee): bool => $employee['embeddings'] !== [])->values()->all();
+
+                $engineRequest->connectTimeout(2)
+                    ->timeout(60)
+                    ->post($engineUrl.'/api/v1/cache/sync', [
+                        'replace_all' => true,
+                        'source_version' => $sourceVersion,
+                        'similarity_threshold' => (float) SystemSetting::get(
+                            'similarity_threshold',
+                            (string) config('biometric.match_threshold', 0.65)
+                        ),
+                        'ambiguity_margin' => (float) SystemSetting::get(
+                            'ambiguity_margin',
+                            (string) config('biometric.margin_threshold', 0.08)
+                        ),
+                        'employees' => $payloadEmployees,
+                    ])
+                    ->throw();
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        });
+    }
+
+    private function faceGallerySourceVersion(): string
+    {
+        $activeEmbeddingQuery = FaceEmbedding::query()
+            ->where('is_active', true)
+            ->whereHas('employee', fn ($query) => $query->where('status', 'aktif'));
+
+        $versionParts = [
+            Employee::where('status', 'aktif')->count(),
+            (clone $activeEmbeddingQuery)->count(),
+            (string) (clone $activeEmbeddingQuery)->max('face_embeddings.updated_at'),
+            (string) Employee::where('status', 'aktif')->max('updated_at'),
+            SystemSetting::get('similarity_threshold', (string) config('biometric.match_threshold', 0.65)),
+            SystemSetting::get('ambiguity_margin', (string) config('biometric.margin_threshold', 0.08)),
+        ];
+
+        return 'gallery_'.substr(hash('sha256', implode('|', $versionParts)), 0, 16);
     }
 }

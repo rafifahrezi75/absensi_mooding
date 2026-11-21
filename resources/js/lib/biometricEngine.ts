@@ -709,32 +709,6 @@ export async function checkPythonEngineHealth(): Promise<{
   }
 }
 
-export async function syncEmployeesToPythonEngine(employees: any[]): Promise<boolean> {
-  try {
-    const formatted = employees.map((emp) => ({
-      employee_id: emp.id || emp.employee_id,
-      external_karyawan_id: emp.id || emp.external_karyawan_id,
-      company_id: emp.company_id || 1,
-      entitasshelter_id: emp.entitasshelter_id || null,
-      cabang_id: emp.cabang_id || null,
-      proyek_id: emp.proyek_id || null,
-      id_karyawan: emp.id_karyawan,
-      id_absensi: emp.id_absensi || null,
-      nama_karyawan: emp.nama_karyawan,
-      embeddings: (emp.embeddings || []).map((e: any) => e.vector || e),
-    }));
-
-    const res = await fetch(`${PYTHON_ENGINE_URL}/api/v1/cache/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ replace_all: true, employees: formatted }),
-    });
-    return res.ok;
-  } catch (err) {
-    return false;
-  }
-}
-
 export async function captureBurstFrames(
   video: HTMLVideoElement,
   count: number = 3,
@@ -761,6 +735,24 @@ export async function captureBurstFrames(
   }
 
   return blobs;
+}
+
+export async function captureFrameBlob(
+  video: HTMLVideoElement,
+  quality: number = 0.82
+): Promise<Blob | null> {
+  if (video.readyState < 2) return null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.min(video.videoWidth || 640, 640);
+  canvas.height = Math.min(video.videoHeight || 480, 480);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', quality);
+  });
 }
 
 export async function recognizeFaceWithPython(

@@ -3,7 +3,12 @@ from pydantic_settings import BaseSettings
 from typing import List
 
 class Settings(BaseSettings):
-    model_config = {"protected_namespaces": (), "extra": "ignore"}
+    model_config = {
+        "protected_namespaces": (),
+        "extra": "ignore",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+    }
 
     app_name: str = "FaceEngine"
     app_env: str = "local"
@@ -17,12 +22,12 @@ class Settings(BaseSettings):
     sface_model_path: str = "models/face_recognition_sface_2021dec.onnx"
     yunet_model_path: str = "models/face_detection_yunet_2023mar.onnx"
 
-    similarity_threshold: float = 0.55
+    similarity_threshold: float = 0.65
     ambiguity_margin: float = 0.08
     top_k: int = 5
 
     capture_frame_count: int = 5
-    min_consistent_frames: int = 3
+    min_consistent_frames: int = 4
     min_probe_stability: float = 0.70
     min_probe_quality: float = 60.0
 
@@ -38,6 +43,7 @@ class Settings(BaseSettings):
     enable_passive_anti_spoof: bool = True
     passive_spoof_threshold: float = 0.55
     second_model_required: bool = False
+    sface_similarity_threshold: float = 0.363
     stage_b_top_n: int = 3
     confusable_threshold: float = 0.65
     biometric_shared_secret: str = "mooding_biometric_secure_secret_2026"

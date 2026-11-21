@@ -2,7 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\AttendanceEvent;
 use App\Models\Employee;
+use App\Models\FaceEmbedding;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class FaceKioskTest extends TestCase
@@ -52,12 +55,28 @@ class FaceKioskTest extends TestCase
 
     public function test_kiosk_employees_cache(): void
     {
+        Http::preventStrayRequests();
+        Http::fake([
+            config('biometric.engine_url').'/health' => Http::response([
+                'status' => 'ok',
+                'gallery_version' => 'current-test-version',
+            ]),
+            config('biometric.engine_url').'/api/v1/cache/sync' => Http::response([
+                'status' => 'ok',
+            ]),
+        ]);
+
         $response = $this->getJson('/api/kiosk/employees-cache');
         $response->assertStatus(200)
             ->assertJsonStructure([
                 'server_time',
                 'employees',
             ]);
+
+        foreach ($response->json('employees') as $employee) {
+            $this->assertArrayNotHasKey('embeddings', $employee);
+            $this->assertArrayNotHasKey('embedding_vector', $employee);
+        }
     }
 
     public function test_kiosk_attendance_tap_and_deduplication(): void
@@ -65,9 +84,11 @@ class FaceKioskTest extends TestCase
         $emp = Employee::where('id_karyawan', 'EMP001')->first();
         $this->assertNotNull($emp);
 
-        $idempotencyKey = 'test-idemp-' . uniqid();
+        $idempotencyKey = 'test-idemp-'.uniqid();
         $workDate = date('Y-m-d', strtotime('+10 days'));
-        \App\Models\AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
+        AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
+        $ts = time();
+        $token = hash_hmac('sha256', "{$emp->id}:{$ts}:VERIFIED", config('biometric.shared_secret'));
 
         $response = $this->postJson('/api/kiosk/attendance-tap', [
             'idempotency_key' => $idempotencyKey,
@@ -78,8 +99,11 @@ class FaceKioskTest extends TestCase
             'recorded_at' => date('c'),
             'confidence_score' => 0.92,
             'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp->id,
             'liveness_passed' => true,
-            'proof_photo_base64' => 'data:image/jpeg;base64,' . base64_encode('fake_tap_photo'),
+            'attestation_token' => $token,
+            'attestation_timestamp' => $ts,
+            'proof_photo_base64' => 'data:image/jpeg;base64,'.base64_encode('fake_tap_photo'),
         ]);
 
         $response->assertStatus(200)
@@ -89,15 +113,18 @@ class FaceKioskTest extends TestCase
             ]);
 
         $duplicateResponse = $this->postJson('/api/kiosk/attendance-tap', [
-            'idempotency_key' => 'test-idemp-' . uniqid(),
+            'idempotency_key' => 'test-idemp-'.uniqid(),
             'employee_id' => $emp->id,
             'work_date' => $workDate,
             'attendance_type' => 'clock_in',
             'auth_method' => 'face_liveness',
             'recorded_at' => date('c'),
             'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp->id,
             'confidence_score' => 0.94,
             'liveness_passed' => true,
+            'attestation_token' => $token,
+            'attestation_timestamp' => $ts,
         ]);
 
         $duplicateResponse->assertStatus(200)
@@ -108,7 +135,7 @@ class FaceKioskTest extends TestCase
 
     public function test_kiosk_fallback_pin_tap(): void
     {
-        $idempotencyKey = 'test-fallback-' . uniqid();
+        $idempotencyKey = 'test-fallback-'.uniqid();
         $workDate = date('Y-m-d');
 
         $response = $this->postJson('/api/kiosk/fallback-tap', [
@@ -118,7 +145,7 @@ class FaceKioskTest extends TestCase
             'work_date' => $workDate,
             'attendance_type' => 'clock_out',
             'recorded_at' => date('c'),
-            'proof_photo_base64' => 'data:image/jpeg;base64,' . base64_encode('dummy_image_content'),
+            'proof_photo_base64' => 'data:image/jpeg;base64,'.base64_encode('dummy_image_content'),
         ]);
 
         $response->assertStatus(200)
@@ -174,7 +201,7 @@ class FaceKioskTest extends TestCase
         $emp = Employee::where('id_karyawan', 'EMP002')->first();
         $this->assertNotNull($emp);
 
-        $idempotencyKey = 'test-batch-' . uniqid();
+        $idempotencyKey = 'test-batch-'.uniqid();
 
         $response = $this->postJson('/api/integrations/face-attendance/events', [
             'events' => [
@@ -211,7 +238,7 @@ class FaceKioskTest extends TestCase
         $emp = Employee::first();
         $this->assertNotNull($emp);
 
-        $response = $this->getJson('/api/hrd/employees/' . $emp->id);
+        $response = $this->getJson('/api/hrd/employees/'.$emp->id);
         $response->assertStatus(200)
             ->assertJsonStructure([
                 'employee' => [
@@ -230,13 +257,15 @@ class FaceKioskTest extends TestCase
         $emp = Employee::first();
         $this->assertNotNull($emp);
 
-        $fakePhotoBase64 = 'data:image/jpeg;base64,' . base64_encode('fake-jpg-content');
-        $fakeVector = array_fill(0, 128, 0.05);
+        $fakePhotoBase64 = 'data:image/jpeg;base64,'.base64_encode('fake-jpg-content');
+        Http::fake();
+        $fakeVector = array_fill(0, 512, 0.05);
 
-        $response = $this->postJson('/api/hrd/employees/' . $emp->id . '/enroll-face', [
+        $response = $this->postJson('/api/hrd/employees/'.$emp->id.'/enroll-face', [
             'embedding_vector' => $fakeVector,
             'pose_label' => 'front',
-            'model_version' => 'buffalo_s',
+            'model_name' => 'buffalo_s',
+            'model_version' => 'arcface_r50_v1',
             'consent_given' => true,
             'photo_base64' => $fakePhotoBase64,
         ]);
@@ -250,7 +279,7 @@ class FaceKioskTest extends TestCase
 
         $embeddingId = $response->json('embedding_id');
         if ($embeddingId) {
-            \App\Models\FaceEmbedding::find($embeddingId)?->delete();
+            FaceEmbedding::find($embeddingId)?->delete();
         }
     }
 
@@ -259,9 +288,11 @@ class FaceKioskTest extends TestCase
         $emp = Employee::where('id_karyawan', 'EMP001')->first();
         $this->assertNotNull($emp);
 
-        $idempotencyKey = 'test-audit-' . uniqid();
+        $idempotencyKey = 'test-audit-'.uniqid();
         $workDate = date('Y-m-d', strtotime('+20 days'));
-        \App\Models\AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
+        AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
+        $ts = time();
+        $token = hash_hmac('sha256', "{$emp->id}:{$ts}:VERIFIED", config('biometric.shared_secret'));
 
         $response = $this->postJson('/api/kiosk/attendance-tap', [
             'idempotency_key' => $idempotencyKey,
@@ -272,6 +303,7 @@ class FaceKioskTest extends TestCase
             'recorded_at' => date('c'),
             'confidence_score' => 0.88,
             'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp->id,
             'top1_score' => 0.88,
             'top2_score' => 0.32,
             'score_margin' => 0.56,
@@ -279,7 +311,9 @@ class FaceKioskTest extends TestCase
             'captured_frames' => 5,
             'consistent_frames' => 5,
             'liveness_passed' => true,
-            'proof_photo_base64' => 'data:image/jpeg;base64,' . base64_encode('fake_verified_tap_photo'),
+            'attestation_token' => $token,
+            'attestation_timestamp' => $ts,
+            'proof_photo_base64' => 'data:image/jpeg;base64,'.base64_encode('fake_verified_tap_photo'),
         ]);
 
         $response->assertStatus(200);
@@ -298,7 +332,7 @@ class FaceKioskTest extends TestCase
         $emp = Employee::where('id_karyawan', 'EMP001')->first();
         $this->assertNotNull($emp);
 
-        $idempotencyKey = 'test-rejected-' . uniqid();
+        $idempotencyKey = 'test-rejected-'.uniqid();
         $workDate = date('Y-m-d', strtotime('+25 days'));
 
         $response = $this->postJson('/api/kiosk/attendance-tap', [
@@ -336,16 +370,19 @@ class FaceKioskTest extends TestCase
         $emp = Employee::first();
         $this->assertNotNull($emp);
 
-        $initialEmbeddingIds = \App\Models\FaceEmbedding::where('employee_id', $emp->id)->pluck('id')->toArray();
+        $initialEmbeddingIds = FaceEmbedding::where('employee_id', $emp->id)->pluck('id')->toArray();
 
-        $fakeVector1 = array_fill(0, 128, 0.10);
-        $fakeVector2 = array_fill(0, 128, 0.12);
+        Http::fake();
+        $fakeVector1 = array_fill(0, 512, 0.10);
+        $fakeVector2 = array_fill(0, 512, 0.12);
 
-        $response = $this->postJson('/api/hrd/employees/' . $emp->id . '/enroll-face', [
+        $response = $this->postJson('/api/hrd/employees/'.$emp->id.'/enroll-face', [
             'consent_given' => true,
             'templates' => [
                 [
                     'embedding_vector' => $fakeVector1,
+                    'model_name' => 'buffalo_s',
+                    'model_version' => 'arcface_r50_v1',
                     'pose_label' => 'front',
                     'quality_score' => 96.5,
                     'blur_score' => 140.2,
@@ -356,6 +393,8 @@ class FaceKioskTest extends TestCase
                 ],
                 [
                     'embedding_vector' => $fakeVector2,
+                    'model_name' => 'buffalo_s',
+                    'model_version' => 'arcface_r50_v1',
                     'pose_label' => 'slight_left',
                     'quality_score' => 91.0,
                     'blur_score' => 120.0,
@@ -373,9 +412,28 @@ class FaceKioskTest extends TestCase
                 'enrolled_count' => 2,
             ]);
 
-        \App\Models\FaceEmbedding::where('employee_id', $emp->id)
+        FaceEmbedding::where('employee_id', $emp->id)
             ->whereNotIn('id', $initialEmbeddingIds)
             ->delete();
+    }
+
+    public function test_hrd_rejects_embedding_dimension_that_does_not_match_model(): void
+    {
+        $emp = Employee::first();
+        $this->assertNotNull($emp);
+
+        $response = $this->postJson('/api/hrd/employees/'.$emp->id.'/enroll-face', [
+            'consent_given' => true,
+            'templates' => [[
+                'embedding_vector' => array_fill(0, 512, 0.1),
+                'model_name' => 'sface',
+                'model_version' => 'opencv_sface_2021dec',
+                'pose_label' => 'front',
+            ]],
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['templates.0.embedding_vector']);
     }
 
     public function test_hrd_upload_and_delete_profile_photo(): void
@@ -384,9 +442,9 @@ class FaceKioskTest extends TestCase
         $this->assertNotNull($emp);
         $originalPhoto = $emp->profile_photo_path;
 
-        $fakePhotoBase64 = 'data:image/jpeg;base64,' . base64_encode('fake-profile-photo-content');
+        $fakePhotoBase64 = 'data:image/jpeg;base64,'.base64_encode('fake-profile-photo-content');
 
-        $uploadResponse = $this->postJson('/api/hrd/employees/' . $emp->id . '/upload-profile-photo', [
+        $uploadResponse = $this->postJson('/api/hrd/employees/'.$emp->id.'/upload-profile-photo', [
             'photo_base64' => $fakePhotoBase64,
         ]);
 
@@ -403,7 +461,7 @@ class FaceKioskTest extends TestCase
         $emp->refresh();
         $this->assertNotNull($emp->profile_photo_path);
 
-        $deleteResponse = $this->deleteJson('/api/hrd/employees/' . $emp->id . '/profile-photo');
+        $deleteResponse = $this->deleteJson('/api/hrd/employees/'.$emp->id.'/profile-photo');
         $deleteResponse->assertStatus(200)
             ->assertJson([
                 'success' => true,
@@ -416,16 +474,33 @@ class FaceKioskTest extends TestCase
         $emp->update(['profile_photo_path' => $originalPhoto]);
     }
 
-    public function test_kiosk_face_engine_proxy_collision_scan(): void
+    public function test_face_engine_proxy_blocks_gallery_admin_endpoints(): void
     {
+        Http::preventStrayRequests();
+        Http::fake();
+
         $response = $this->getJson('/api/face-engine/api/v1/gallery/collision-scan');
-        $response->assertStatus(200)
-            ->assertJsonStructure([
-                'status',
-                'total_identities',
-                'high_risk_count',
-                'pairs',
-            ]);
+        $response->assertNotFound();
+
+        Http::assertNothingSent();
+    }
+
+    public function test_face_engine_proxy_adds_internal_secret_header(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            config('biometric.engine_url').'/health' => Http::response([
+                'status' => 'ok',
+                'model_loaded' => true,
+            ]),
+        ]);
+
+        $this->getJson('/api/face-engine/health')->assertOk();
+
+        Http::assertSent(fn ($request) => $request->hasHeader(
+            'X-Biometric-Secret',
+            config('biometric.shared_secret')
+        ));
     }
 
     public function test_kiosk_attendance_tap_ambiguous_decision(): void
@@ -435,7 +510,7 @@ class FaceKioskTest extends TestCase
         $this->assertNotNull($emp1);
         $this->assertNotNull($emp2);
 
-        $idempotencyKey = 'test-ambig-' . uniqid();
+        $idempotencyKey = 'test-ambig-'.uniqid();
         $workDate = date('Y-m-d', strtotime('+30 days'));
 
         $response = $this->postJson('/api/kiosk/attendance-tap', [
@@ -480,7 +555,7 @@ class FaceKioskTest extends TestCase
         $emp = Employee::where('id_karyawan', 'EMP001')->first();
         $this->assertNotNull($emp);
 
-        $idempotencyKey = 'test-nodec-' . uniqid();
+        $idempotencyKey = 'test-nodec-'.uniqid();
         $workDate = date('Y-m-d', strtotime('+35 days'));
 
         $response = $this->postJson('/api/kiosk/attendance-tap', [
@@ -494,10 +569,7 @@ class FaceKioskTest extends TestCase
         ]);
 
         $response->assertStatus(422)
-            ->assertJson([
-                'status' => 'unknown',
-                'decision' => 'UNKNOWN',
-            ]);
+            ->assertJsonValidationErrors(['decision']);
 
         $this->assertDatabaseMissing('attendance_events', [
             'idempotency_key' => $idempotencyKey,
@@ -509,7 +581,7 @@ class FaceKioskTest extends TestCase
         $emp = Employee::where('id_karyawan', 'EMP001')->first();
         $this->assertNotNull($emp);
 
-        $idempotencyKey = 'test-forged-' . uniqid();
+        $idempotencyKey = 'test-forged-'.uniqid();
         $workDate = date('Y-m-d', strtotime('+36 days'));
 
         $response = $this->postJson('/api/kiosk/attendance-tap', [
@@ -520,6 +592,7 @@ class FaceKioskTest extends TestCase
             'auth_method' => 'face_liveness',
             'recorded_at' => date('c'),
             'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp->id,
             'attestation_token' => 'forged_fake_token_1234567890',
             'attestation_timestamp' => time(),
             'liveness_passed' => true,
@@ -536,14 +609,62 @@ class FaceKioskTest extends TestCase
         ]);
     }
 
+    public function test_kiosk_attendance_tap_requires_server_attestation(): void
+    {
+        $emp = Employee::where('id_karyawan', 'EMP001')->first();
+        $this->assertNotNull($emp);
+
+        $response = $this->postJson('/api/kiosk/attendance-tap', [
+            'idempotency_key' => 'test-no-attest-'.uniqid(),
+            'employee_id' => $emp->id,
+            'work_date' => date('Y-m-d', strtotime('+38 days')),
+            'attendance_type' => 'clock_in',
+            'auth_method' => 'face_liveness',
+            'recorded_at' => date('c'),
+            'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp->id,
+            'liveness_passed' => true,
+        ]);
+
+        $response->assertStatus(422)->assertJson([
+            'status' => 'invalid_attestation',
+            'reject_reason' => 'ATTESTATION_REQUIRED',
+        ]);
+    }
+
+    public function test_kiosk_attendance_tap_rejects_top_candidate_mismatch(): void
+    {
+        $emp1 = Employee::where('id_karyawan', 'EMP001')->first();
+        $emp2 = Employee::where('id_karyawan', 'EMP002')->first();
+        $this->assertNotNull($emp1);
+        $this->assertNotNull($emp2);
+
+        $response = $this->postJson('/api/kiosk/attendance-tap', [
+            'idempotency_key' => 'test-top1-mismatch-'.uniqid(),
+            'employee_id' => $emp1->id,
+            'work_date' => date('Y-m-d', strtotime('+39 days')),
+            'attendance_type' => 'clock_in',
+            'auth_method' => 'face_liveness',
+            'recorded_at' => date('c'),
+            'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp2->id,
+            'liveness_passed' => true,
+        ]);
+
+        $response->assertStatus(422)->assertJson([
+            'status' => 'identity_mismatch',
+            'reject_reason' => 'TOP1_EMPLOYEE_MISMATCH',
+        ]);
+    }
+
     public function test_kiosk_attendance_tap_succeeds_with_valid_hmac_attestation_token(): void
     {
         $emp = Employee::where('id_karyawan', 'EMP001')->first();
         $this->assertNotNull($emp);
 
-        $idempotencyKey = 'test-valid-hmac-' . uniqid();
+        $idempotencyKey = 'test-valid-hmac-'.uniqid();
         $workDate = date('Y-m-d', strtotime('+37 days'));
-        \App\Models\AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
+        AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
         $ts = time();
         $secret = config('biometric.shared_secret', 'mooding_biometric_secure_secret_2026');
         $validToken = hash_hmac('sha256', "{$emp->id}:{$ts}:VERIFIED", $secret);
@@ -559,8 +680,9 @@ class FaceKioskTest extends TestCase
             'attestation_token' => $validToken,
             'attestation_timestamp' => $ts,
             'confidence_score' => 0.91,
+            'top1_employee_id' => $emp->id,
             'liveness_passed' => true,
-            'proof_photo_base64' => 'data:image/jpeg;base64,' . base64_encode('fake_photo_hmac'),
+            'proof_photo_base64' => 'data:image/jpeg;base64,'.base64_encode('fake_photo_hmac'),
         ]);
 
         $response->assertStatus(200)

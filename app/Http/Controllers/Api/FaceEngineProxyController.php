@@ -11,15 +11,28 @@ class FaceEngineProxyController extends Controller
 {
     public function proxy(Request $request, string $path = '')
     {
-        $engineUrl = rtrim(env('PYTHON_FACE_ENGINE_URL', 'http://127.0.0.1:8005'), '/') . '/' . ltrim($path, '/');
+        $normalizedPath = trim($path, '/');
+        $allowedRequests = [
+            'GET' => ['health'],
+            'POST' => ['api/v1/enroll', 'api/v1/recognize'],
+        ];
+        $method = strtoupper($request->method());
+
+        if (! in_array($normalizedPath, $allowedRequests[$method] ?? [], true)) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $engineUrl = rtrim((string) config('biometric.engine_url'), '/').'/'.$normalizedPath;
 
         try {
-            $method = strtoupper($request->method());
+            $httpRequest = Http::withHeaders([
+                'X-Biometric-Secret' => (string) config('biometric.shared_secret'),
+            ]);
 
             if ($method === 'GET') {
-                $response = Http::timeout(5)->get($engineUrl, $request->query());
+                $response = $httpRequest->connectTimeout(1)->timeout(5)->get($engineUrl, $request->query());
             } elseif (count($request->allFiles()) > 0) {
-                $httpRequest = Http::timeout(15);
+                $httpRequest = $httpRequest->connectTimeout(2)->timeout(30);
                 foreach ($request->allFiles() as $name => $files) {
                     if (is_array($files)) {
                         foreach ($files as $file) {
@@ -32,11 +45,11 @@ class FaceEngineProxyController extends Controller
                 $response = $httpRequest->post($engineUrl, $request->except(array_keys($request->allFiles())));
             } else {
                 $payload = $request->json()->all();
-                if (!empty($payload)) {
-                    $response = Http::timeout(15)->post($engineUrl, $payload);
+                if (! empty($payload)) {
+                    $response = $httpRequest->connectTimeout(2)->timeout(30)->post($engineUrl, $payload);
                 } else {
                     $raw = $request->getContent();
-                    $response = Http::timeout(15)
+                    $response = $httpRequest->connectTimeout(2)->timeout(30)
                         ->withBody($raw, $request->header('Content-Type', 'application/json'))
                         ->send($method, $engineUrl);
                 }

@@ -246,12 +246,40 @@ export function EmployeesPage() {
 
           if (pyRes.ok) {
             const enrollData = await pyRes.json();
+            const sampleMeta = enrollData.samples_metadata?.[0] || {};
+            const templates = [
+              {
+                embedding_vector: enrollData.mean_embedding,
+                model_name: enrollData.model_name,
+                model_version: enrollData.model_version,
+                pose_label: poseLabel,
+                photo_base64: photoBase64,
+                quality_score: sampleMeta.quality_score,
+                blur_score: sampleMeta.blur_score,
+                brightness_score: sampleMeta.brightness,
+                pose_yaw: sampleMeta.yaw,
+                pose_pitch: sampleMeta.pitch,
+                pose_roll: sampleMeta.roll,
+              },
+            ];
+            if (enrollData.secondary_mean_embedding) {
+              templates.push({
+                embedding_vector: enrollData.secondary_mean_embedding,
+                model_name: enrollData.secondary_model_name,
+                model_version: enrollData.secondary_model_version,
+                pose_label: poseLabel,
+                photo_base64: null,
+                quality_score: sampleMeta.quality_score,
+                blur_score: sampleMeta.blur_score,
+                brightness_score: sampleMeta.brightness,
+                pose_yaw: sampleMeta.yaw,
+                pose_pitch: sampleMeta.pitch,
+                pose_roll: sampleMeta.roll,
+              });
+            }
             const res = await axios.post(`/api/hrd/employees/${selectedEmployee.id}/enroll-face`, {
-              embedding_vector: enrollData.mean_embedding,
-              model_version: 'buffalo_s',
-              pose_label: poseLabel,
+              templates,
               consent_given: true,
-              photo_base64: photoBase64,
             });
 
             if (res.data.success) {
@@ -270,30 +298,7 @@ export function EmployeesPage() {
         }
       }
 
-      if (!isBiometricModelsLoaded()) {
-        await loadBiometricModels();
-      }
-
-      const detection = await detectFaceWithDescriptor(videoRef.current);
-      if (!detection || !detection.descriptor || detection.descriptor.length === 0) {
-        toast.error('Wajah tidak terdeteksi. Posisikan wajah tepat di depan kamera.');
-        setEnrolling(false);
-        isEnrollingRef.current = false;
-        return;
-      }
-
-      const res = await axios.post(`/api/hrd/employees/${selectedEmployee.id}/enroll-face`, {
-        embedding_vector: detection.descriptor,
-        pose_label: poseLabel,
-        consent_given: true,
-        photo_base64: photoBase64,
-      });
-
-      if (res.data.success) {
-        toast.success(`Wajah ${selectedEmployee.nama_karyawan} berhasil didaftarkan`);
-        closeEnrollModal();
-        fetchEmployees();
-      }
+      toast.error('Mesin InsightFace tidak tersedia. Pendaftaran wajah dibatalkan agar format biometrik tetap konsisten.');
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Gagal menyimpan biometrik wajah');
     } finally {
@@ -639,7 +644,7 @@ export function EmployeesPage() {
                 {autoBlinkEnroll && (
                   <Badge variant="outline" className="gap-1 bg-purple-500/30 text-purple-200 border-purple-500/40 text-[10px]">
                     <Sparkles className="h-3 w-3" />
-                    <span>e-KYC Bank</span>
+                    <span>Liveness Aktif</span>
                   </Badge>
                 )}
               </div>

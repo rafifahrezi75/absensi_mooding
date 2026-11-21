@@ -22,10 +22,7 @@ import {
   Monitor,
   Sparkles,
 } from 'lucide-react';
-import {
-  checkPythonEngineHealth,
-  syncEmployeesToPythonEngine,
-} from '@/lib/biometricEngine';
+import { checkPythonEngineHealth } from '@/lib/biometricEngine';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -77,13 +74,12 @@ export function SettingsPage() {
     try {
       const res = await axios.get('/api/kiosk/employees-cache');
       if (res.data.employees) {
-        const success = await syncEmployeesToPythonEngine(res.data.employees);
-        if (success) {
+        const pyStatus = await checkPythonEngineHealth();
+        if (pyStatus.available) {
           toast.success(`${res.data.employees.length} data wajah berhasil disinkronkan ke mesin Python`);
-          const pyStatus = await checkPythonEngineHealth();
           setPyEngineStatus(pyStatus);
         } else {
-          toast.error('Gagal mengirim data ke mesin Python');
+          toast.error('Mesin Python belum dapat dihubungi');
         }
       }
     } catch (err: any) {

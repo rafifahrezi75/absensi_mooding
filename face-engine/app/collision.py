@@ -23,15 +23,17 @@ def build_collision_map(
 
         for row_rel in range(end_idx - start_idx):
             global_row = start_idx + row_rel
-            batch_sims[row_rel, global_row] = -1.0
-            order = np.argsort(-batch_sims[row_rel])[:actual_k]
+            row_scores = batch_sims[row_rel]
+            row_scores[global_row] = -1.0
+            candidate_indices = np.argpartition(-row_scores, actual_k - 1)[:actual_k]
+            order = candidate_indices[np.argsort(-row_scores[candidate_indices])]
             neighbors = [
                 {
                     "employee_id": ids[index],
-                    "score": round(float(batch_sims[row_rel, index]), 4)
+                    "score": round(float(row_scores[index]), 4)
                 }
                 for index in order
-                if batch_sims[row_rel, index] > -0.9
+                if row_scores[index] > -0.9
             ]
             output[ids[global_row]] = neighbors
 
