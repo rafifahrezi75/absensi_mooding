@@ -259,10 +259,10 @@ export function LogsPage() {
                         <tr key={ev.id} className="hover:bg-muted/30">
                           <td className="py-3 px-4 font-mono">
                             <div className="font-semibold text-foreground">
-                              {ev.recorded_at ? new Date(ev.recorded_at).toLocaleTimeString('id-ID') : '-'}
+                              {ev.recorded_at ? new Date(ev.recorded_at).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' }) + ' WIB' : '-'}
                             </div>
                             <div className="text-[10px] text-muted-foreground">
-                              {ev.work_date || (ev.recorded_at ? new Date(ev.recorded_at).toLocaleDateString('id-ID') : '-')}
+                              {ev.work_date || (ev.recorded_at ? new Date(ev.recorded_at).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta' }) : '-')}
                             </div>
                           </td>
 

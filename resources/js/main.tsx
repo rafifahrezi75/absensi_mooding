@@ -8,6 +8,7 @@ import { KioskPage } from '@/pages/Kiosk/KioskPage';
 import { LoginPage } from '@/pages/Hrd/LoginPage';
 import { DashboardPage } from '@/pages/Hrd/DashboardPage';
 import { EmployeesPage } from '@/pages/Hrd/EmployeesPage';
+import { EmployeeDetailPage } from '@/pages/Hrd/EmployeeDetailPage';
 import { LogsPage } from '@/pages/Hrd/LogsPage';
 import { SettingsPage } from '@/pages/Hrd/SettingsPage';
 
@@ -22,6 +23,7 @@ function App() {
           <Route path="/hrd/login" element={<LoginPage />} />
           <Route path="/hrd/dashboard" element={<DashboardPage />} />
           <Route path="/hrd/employees" element={<EmployeesPage />} />
+          <Route path="/hrd/employees/:id" element={<EmployeeDetailPage />} />
           <Route path="/hrd/logs" element={<LogsPage />} />
           <Route path="/hrd/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/kiosk" replace />} />

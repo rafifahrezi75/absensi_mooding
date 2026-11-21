@@ -206,7 +206,7 @@ export function DashboardPage() {
                           </td>
                           <td className="py-3 px-3 font-mono text-muted-foreground">v{d.app_version || '1.0.0'}</td>
                           <td className="py-3 px-3 text-right text-muted-foreground">
-                            {d.last_seen_at ? new Date(d.last_seen_at).toLocaleTimeString('id-ID') : '-'}
+                            {d.last_seen_at ? new Date(d.last_seen_at).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' }) + ' WIB' : '-'}
                           </td>
                         </tr>
                       ))}

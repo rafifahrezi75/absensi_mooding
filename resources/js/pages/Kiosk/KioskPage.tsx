@@ -17,6 +17,10 @@ import {
   SunMedium,
   UserCheck,
   BrainCircuit,
+  Eye,
+  EyeOff,
+  ScanFace,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   loadBiometricModels,
@@ -24,6 +28,15 @@ import {
   verifyLivenessFromLandmarks,
   matchFaceToEmployees,
   assessLightingQuality,
+  checkPythonEngineHealth,
+  syncEmployeesToPythonEngine,
+  captureBurstFrames,
+  recognizeFaceWithPython,
+  ActiveChallengeDetector,
+  ChallengeType,
+  BlinkDetector,
+  BlinkStage,
+  getBlinkInstruction,
 } from '@/lib/biometricEngine';
 import {
   cacheEmployees,
@@ -52,12 +65,28 @@ export function KioskPage() {
   const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'success' | 'ambiguous'>('idle');
   const [lastResult, setLastResult] = useState<any>(null);
   const [failedCount, setFailedCount] = useState<number>(0);
+  const [pythonEngineActive, setPythonEngineActive] = useState<boolean>(false);
   const [isFallbackOpen, setIsFallbackOpen] = useState<boolean>(false);
   const [ambiguousData, setAmbiguousData] = useState<any>(null);
   const [digitConfirm, setDigitConfirm] = useState<string>('');
+  const [blinkStage, setBlinkStage] = useState<BlinkStage>('no_face');
+  const [challengeUI, setChallengeUI] = useState<{
+    text: string;
+    subtext: string;
+    badgeClass: string;
+    borderClass: string;
+  }>({
+    text: 'Posisikan Wajah',
+    subtext: 'Arahkan wajah ke dalam lingkaran panduan',
+    badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+    borderClass: 'border-white/30 scale-100',
+  });
 
   const scanLockRef = useRef<boolean>(false);
   const isDetectingRef = useRef<boolean>(false);
+  const blinkDetectorRef = useRef<BlinkDetector>(new BlinkDetector());
+  const activeDetectorRef = useRef<ActiveChallengeDetector>(new ActiveChallengeDetector('BLINK'));
+  const alignedTicksRef = useRef<number>(0);
 
   useEffect(() => {
     loadConfig();
@@ -88,7 +117,7 @@ export function KioskPage() {
   const autoSelectButton = (buttons: any[]) => {
     if (!buttons || buttons.length === 0) return;
     const now = new Date();
-    const currentHms = now.toTimeString().split(' ')[0];
+    const currentHms = now.toLocaleTimeString('en-GB', { timeZone: 'Asia/Jakarta', hour12: false });
 
     const matched = buttons.find((b: any) => {
       if (!b.is_enabled || !b.auto_highlight_start || !b.auto_highlight_end) return false;
@@ -104,16 +133,27 @@ export function KioskPage() {
 
   const loadEmployees = async () => {
     try {
+      let emps: any[] = [];
       const local = await getCachedEmployees();
       if (local && local.length > 0) {
+        emps = local;
         setCachedEmployees(local);
       }
 
       if (navigator.onLine) {
         const res = await axios.get('/api/kiosk/employees-cache');
         if (res.data.employees) {
+          emps = res.data.employees;
           setCachedEmployees(res.data.employees);
           await cacheEmployees(res.data.employees);
+        }
+      }
+
+      const pyStatus = await checkPythonEngineHealth();
+      if (pyStatus.available) {
+        setPythonEngineActive(true);
+        if (emps.length > 0) {
+          syncEmployeesToPythonEngine(emps);
         }
       }
     } catch (err) {}
@@ -157,6 +197,114 @@ export function KioskPage() {
     setCameraActive(false);
   };
 
+  const triggerRecognition = async (detection: any, challengeType: string = 'BLINK') => {
+    if (scanLockRef.current) return;
+    setScanStatus('scanning');
+
+    if (pythonEngineActive && videoRef.current) {
+      const frameCount = config?.settings?.capture_frame_count || 4;
+      const frames = await captureBurstFrames(videoRef.current, frameCount, 120);
+      if (frames.length > 0) {
+        const companyId = config?.location?.company_id || 1;
+        const allowedCompanyIds = [companyId];
+        const proyekId = config?.location?.proyek_id;
+        const cabangId = config?.location?.cabang_id;
+
+        const recRes = await recognizeFaceWithPython(
+          frames,
+          companyId,
+          allowedCompanyIds,
+          proyekId,
+          cabangId,
+          challengeType
+        );
+
+        if (recRes.decision === 'VERIFIED' && recRes.employee) {
+          executeAttendanceTap(
+            recRes.employee,
+            recRes.confidence_score || recRes.top1_score || 0.85,
+            recRes.is_cross_location,
+            recRes
+          );
+          return;
+        } else if (recRes.decision === 'RETRY') {
+          if (recRes.status === 'ambiguous') {
+            setAmbiguousData(recRes);
+            setScanStatus('ambiguous');
+            return;
+          }
+          toast.warning(recRes.message || 'Wajah belum dapat dipastikan, coba lagi');
+          setScanStatus('idle');
+          scanLockRef.current = false;
+          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          return;
+        } else if (recRes.decision === 'SPOOF_REJECTED') {
+          toast.error(recRes.message || 'Verifikasi gagal: Keaslian wajah fisik tidak terdeteksi');
+          setScanStatus('idle');
+          scanLockRef.current = false;
+          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          return;
+        } else if (recRes.decision === 'QUALITY_REJECTED') {
+          toast.warning(recRes.message || 'Kualitas frame wajah belum memenuhi standar');
+          setScanStatus('idle');
+          scanLockRef.current = false;
+          return;
+        } else {
+          toast.info(recRes.message || 'Wajah tidak terdaftar dalam sistem');
+          setFailedCount((prev) => {
+            const next = prev + 1;
+            if (next >= (config?.settings?.max_failed_scans || 3)) {
+              setIsFallbackOpen(true);
+              return 0;
+            }
+            return next;
+          });
+          setScanStatus('idle');
+          scanLockRef.current = false;
+          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          return;
+        }
+      }
+    }
+
+    if (detection && detection.descriptor) {
+      const maxDist = 0.40;
+      const margin = config?.settings?.ambiguity_margin || 0.08;
+
+      const matchResult = matchFaceToEmployees(
+        detection.descriptor,
+        cachedEmployees,
+        config?.location,
+        maxDist,
+        margin
+      );
+
+      if (matchResult.matched && matchResult.employee) {
+        if (matchResult.ambiguous) {
+          setAmbiguousData(matchResult);
+          setScanStatus('ambiguous');
+          return;
+        }
+
+        executeAttendanceTap(
+          matchResult.employee,
+          matchResult.confidenceScore,
+          matchResult.isCrossLocation
+        );
+      } else {
+        setFailedCount((prev) => {
+          const next = prev + 1;
+          if (next >= (config?.settings?.max_failed_scans || 3)) {
+            setIsFallbackOpen(true);
+            return 0;
+          }
+          return next;
+        });
+        setScanStatus('idle');
+      }
+    }
+  };
+
   useEffect(() => {
     const loopInterval = setInterval(async () => {
       if (
@@ -195,56 +343,50 @@ export function KioskPage() {
           }
         }
 
-        if (detection && detection.descriptor) {
-          const livenessOk = verifyLivenessFromLandmarks(detection.landmarks);
-          if (!livenessOk) {
-            isDetectingRef.current = false;
-            return;
-          }
+        if (!detection) {
+          activeDetectorRef.current.reset();
+          blinkDetectorRef.current.reset();
+          setBlinkStage('no_face');
+          setChallengeUI({
+            text: 'Posisikan Wajah',
+            subtext: 'Arahkan wajah ke dalam lingkaran panduan',
+            badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+            borderClass: 'border-white/30 scale-100',
+          });
+          alignedTicksRef.current = 0;
+          return;
+        }
 
-          const maxDist = 0.55;
-          const margin = config?.settings?.ambiguity_margin || 0.08;
+        const activeResult = activeDetectorRef.current.update(detection.landmarks);
+        setChallengeUI({
+          text: activeResult.text,
+          subtext: activeResult.subtext,
+          badgeClass: activeResult.badgeClass,
+          borderClass: activeResult.borderClass,
+        });
 
-          const matchResult = matchFaceToEmployees(
-            detection.descriptor,
-            cachedEmployees,
-            config?.location,
-            maxDist,
-            margin
-          );
+        const blinkResult = blinkDetectorRef.current.update(detection.landmarks);
+        setBlinkStage(blinkResult.stage);
 
-          if (matchResult.matched && matchResult.employee) {
-            if (matchResult.ambiguous) {
-              setAmbiguousData(matchResult);
-              setScanStatus('ambiguous');
-              isDetectingRef.current = false;
-              return;
-            }
+        if (activeResult.verified) {
+          await triggerRecognition(detection, activeDetectorRef.current.getChallenge());
+          return;
+        }
 
-            executeAttendanceTap(
-              matchResult.employee,
-              matchResult.confidenceScore,
-              matchResult.isCrossLocation
-            );
-          } else {
-            setFailedCount((prev) => {
-              const next = prev + 1;
-              if (next >= (config?.settings?.max_failed_scans || 3)) {
-                setIsFallbackOpen(true);
-                return 0;
-              }
-              return next;
-            });
-          }
+        alignedTicksRef.current += 1;
+        if (alignedTicksRef.current >= 20 && verifyLivenessFromLandmarks(detection.landmarks)) {
+          alignedTicksRef.current = 0;
+          await triggerRecognition(detection, activeDetectorRef.current.getChallenge());
+          return;
         }
       } catch (err) {
       } finally {
         isDetectingRef.current = false;
       }
-    }, 500);
+    }, 200);
 
     return () => clearInterval(loopInterval);
-  }, [cameraActive, modelReady, cachedEmployees, config, selectedType]);
+  }, [cameraActive, modelReady, cachedEmployees, config, selectedType, pythonEngineActive]);
 
   const generateUuid = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -257,20 +399,35 @@ export function KioskPage() {
   const executeAttendanceTap = async (
     employee: any,
     confidenceScore: number,
-    isCrossLocation: boolean
+    isCrossLocation: boolean,
+    verificationMeta?: any
   ) => {
     if (scanLockRef.current) return;
     scanLockRef.current = true;
     setScanStatus('scanning');
 
+    let proofPhotoBase64: string | null = null;
+    if (videoRef.current && videoRef.current.readyState >= 2) {
+      try {
+        const snapCanvas = document.createElement('canvas');
+        snapCanvas.width = Math.min(videoRef.current.videoWidth || 640, 640);
+        snapCanvas.height = Math.min(videoRef.current.videoHeight || 480, 480);
+        const ctx = snapCanvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(videoRef.current, 0, 0, snapCanvas.width, snapCanvas.height);
+          proofPhotoBase64 = snapCanvas.toDataURL('image/jpeg', 0.85);
+        }
+      } catch (e) {}
+    }
+
     const idempotencyKey = generateUuid();
     const now = new Date();
-    const workDate = now.toISOString().split('T')[0];
+    const workDate = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
     const recordedAt = now.toISOString();
 
     const payload = {
       idempotency_key: idempotencyKey,
-      employee_id: employee.id,
+      employee_id: employee.id || employee.employee_id,
       kiosk_device_id: config?.device?.id || null,
       kiosk_location_id: config?.location?.id || null,
       work_date: workDate,
@@ -280,6 +437,27 @@ export function KioskPage() {
       confidence_score: Math.round(confidenceScore * 1000) / 1000,
       liveness_passed: true,
       is_cross_location: isCrossLocation,
+      proof_photo_base64: proofPhotoBase64,
+      session_id: verificationMeta?.session_id || idempotencyKey,
+      decision: verificationMeta?.decision || 'VERIFIED',
+      reject_reason: verificationMeta?.reject_reason || null,
+      top1_employee_id: verificationMeta?.top1_employee_id || verificationMeta?.employee?.employee_id || employee.id || employee.employee_id,
+      top1_score: verificationMeta?.top1_score || confidenceScore,
+      top2_employee_id: verificationMeta?.top2_employee_id || verificationMeta?.candidates?.[1]?.employee_id || null,
+      top2_score: verificationMeta?.top2_score || null,
+      score_margin: verificationMeta?.score_margin || null,
+      passive_spoof_score: verificationMeta?.passive_spoof_score || null,
+      active_liveness_type: verificationMeta?.challenge_type || activeDetectorRef.current.getChallenge(),
+      captured_frames: verificationMeta?.captured_frames || 1,
+      consistent_frames: verificationMeta?.consistent_frames || 1,
+      quality_score: verificationMeta?.quality_metrics?.quality_score || 100,
+      blur_score: verificationMeta?.quality_metrics?.blur_score || null,
+      brightness_score: verificationMeta?.quality_metrics?.brightness || null,
+      pose_yaw: verificationMeta?.quality_metrics?.yaw || null,
+      pose_pitch: verificationMeta?.quality_metrics?.pitch || null,
+      pose_roll: verificationMeta?.quality_metrics?.roll || null,
+      attestation_token: verificationMeta?.attestation_token || null,
+      attestation_timestamp: verificationMeta?.attestation_timestamp || null,
     };
 
     if (!navigator.onLine) {
@@ -290,8 +468,9 @@ export function KioskPage() {
             nama_karyawan: employee.nama_karyawan,
             id_karyawan: employee.id_karyawan,
           },
+          proof_photo_url: proofPhotoBase64,
           status_label: 'Tersimpan Offline — Akan Disinkronkan Otomatis',
-          recorded_time: now.toLocaleTimeString('id-ID'),
+          recorded_time: now.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' }) + ' WIB',
         };
         showSuccessResult(resultDisplay);
       } catch (err) {
@@ -303,7 +482,10 @@ export function KioskPage() {
 
     try {
       const res = await axios.post('/api/kiosk/attendance-tap', payload);
-      showSuccessResult(res.data);
+      showSuccessResult({
+        ...res.data,
+        proof_photo_url: res.data.proof_photo_url || proofPhotoBase64,
+      });
       setFailedCount(0);
     } catch (err: any) {
       toast.error('Gagal memproses tap absensi');
@@ -375,6 +557,8 @@ export function KioskPage() {
         })
       : defaultButtons;
 
+  const blinkInstruction = getBlinkInstruction(blinkStage);
+
   return (
     <KioskLayout
       locationInfo={config?.location}
@@ -397,17 +581,60 @@ export function KioskPage() {
               className="absolute inset-0 w-full h-full pointer-events-none transform -scale-x-100"
             />
 
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+            <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
               <div
-                className={`w-64 h-80 rounded-[48%] border-4 transition-all duration-300 ${
+                className={`w-64 h-80 rounded-[48%] border-4 transition-all duration-300 flex items-center justify-center relative ${
                   scanStatus === 'success'
                     ? 'border-emerald-500 scale-105 shadow-[0_0_40px_rgba(16,185,129,0.6)]'
                     : scanStatus === 'scanning'
                     ? 'border-primary animate-pulse scale-100 shadow-[0_0_30px_rgba(59,130,246,0.5)]'
-                    : 'border-white/40 scale-100'
+                    : challengeUI.borderClass
                 }`}
               >
                 <div className="absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 bg-white/40 rounded-full" />
+
+                {challengeUI.text.includes('Tengok Kiri') && (
+                  <div className="absolute top-1/3 flex items-center justify-center text-indigo-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
+                    <ScanFace className="h-6 w-6" />
+                  </div>
+                )}
+                {challengeUI.text.includes('Tengok Kanan') && (
+                  <div className="absolute top-1/3 flex items-center justify-center text-indigo-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
+                    <ScanFace className="h-6 w-6" />
+                  </div>
+                )}
+                {challengeUI.text.includes('Buka') && (
+                  <div className="absolute top-1/3 flex items-center justify-center text-purple-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
+                    <Sparkles className="h-6 w-6" />
+                  </div>
+                )}
+                {challengeUI.text.includes('Kedip') && (
+                  <div className="absolute top-1/3 flex items-center justify-center text-sky-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-bounce">
+                    <Eye className="h-6 w-6" />
+                  </div>
+                )}
+                {challengeUI.text.includes('Tertutup') && (
+                  <div className="absolute top-1/3 flex items-center justify-center text-amber-300 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full">
+                    <EyeOff className="h-6 w-6" />
+                  </div>
+                )}
+                {challengeUI.text.includes('Terverifikasi') && (
+                  <div className="absolute top-1/3 flex items-center justify-center text-emerald-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
+                    <CheckCircle2 className="h-6 w-6" />
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-4 pointer-events-auto">
+                <div
+                  className={`px-4 py-2 rounded-full border backdrop-blur-md flex items-center gap-2 shadow-lg transition-all duration-200 ${challengeUI.badgeClass}`}
+                >
+                  <ScanFace className="h-4 w-4 shrink-0" />
+                  <div className="text-center">
+                    <div className="text-xs font-bold leading-tight">{challengeUI.text}</div>
+                    <div className="text-[10px] opacity-80">{challengeUI.subtext}</div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -425,23 +652,13 @@ export function KioskPage() {
                   <span>{lighting.label}</span>
                 </Badge>
 
-                {modelReady ? (
-                  <Badge
-                    variant="outline"
-                    className="gap-1 bg-blue-500/20 text-blue-300 border-blue-500/30 backdrop-blur-md px-2.5 py-1 text-xs"
-                  >
-                    <BrainCircuit className="h-3 w-3" />
-                    <span>ResNet AI</span>
-                  </Badge>
-                ) : (
-                  <Badge
-                    variant="outline"
-                    className="gap-1 bg-amber-500/20 text-amber-300 border-amber-500/30 backdrop-blur-md px-2.5 py-1 text-xs animate-pulse"
-                  >
-                    <RefreshCw className="h-3 w-3 animate-spin" />
-                    <span>Memuat AI...</span>
-                  </Badge>
-                )}
+                <Badge
+                  variant="outline"
+                  className="gap-1 bg-purple-500/20 text-purple-300 border-purple-500/30 backdrop-blur-md px-2.5 py-1 text-xs"
+                >
+                  <ShieldCheck className="h-3 w-3" />
+                  <span>e-KYC Bank Liveness</span>
+                </Badge>
               </div>
 
               <Badge
@@ -455,9 +672,22 @@ export function KioskPage() {
             {scanStatus === 'success' && lastResult && (
               <div className="absolute inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-200">
                 <Card className="w-full max-w-md p-6 bg-card/95 border-emerald-500/40 shadow-2xl text-center space-y-4">
-                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500">
-                    <CheckCircle2 className="h-10 w-10 animate-bounce" />
-                  </div>
+                  {lastResult.proof_photo_url ? (
+                    <div className="relative mx-auto w-24 h-24 rounded-full overflow-hidden border-2 border-emerald-500 shadow-md">
+                      <img
+                        src={lastResult.proof_photo_url}
+                        alt="Foto Wajah"
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[9px] font-bold py-0.5">
+                        TERVERIFIKASI
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500">
+                      <CheckCircle2 className="h-10 w-10 animate-bounce" />
+                    </div>
+                  )}
                   <div>
                     <h3 className="text-xl font-bold tracking-tight text-foreground">
                       {lastResult.employee?.nama_karyawan}

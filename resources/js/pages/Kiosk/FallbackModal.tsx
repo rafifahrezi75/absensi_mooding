@@ -61,7 +61,7 @@ export function FallbackModal({
     const idempotencyKey = generateUuid();
     const now = new Date();
     const recordedAt = now.toISOString();
-    const workDate = now.toISOString().split('T')[0];
+    const workDate = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 
     const payload = {
       idempotency_key: idempotencyKey,
@@ -88,7 +88,7 @@ export function FallbackModal({
             nama_karyawan: 'Karyawan (Mode Offline)',
           },
           status_label: 'Tersimpan Offline — Akan Disinkronkan Otomatis',
-          recorded_time: now.toLocaleTimeString('id-ID'),
+          recorded_time: now.toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' }) + ' WIB',
         });
         handleClose();
       } catch (err: any) {

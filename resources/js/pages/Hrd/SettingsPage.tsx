@@ -16,7 +16,16 @@ import {
   RefreshCw,
   Clock,
   Layers,
+  BrainCircuit,
+  AlertCircle,
+  MapPin,
+  Monitor,
+  Sparkles,
 } from 'lucide-react';
+import {
+  checkPythonEngineHealth,
+  syncEmployeesToPythonEngine,
+} from '@/lib/biometricEngine';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -25,6 +34,8 @@ export function SettingsPage() {
   const [saving, setSaving] = useState<boolean>(false);
   const [testingHeartbeat, setTestingHeartbeat] = useState<boolean>(false);
   const [heartbeatStatus, setHeartbeatStatus] = useState<any>(null);
+  const [pyEngineStatus, setPyEngineStatus] = useState<any>(null);
+  const [syncingPy, setSyncingPy] = useState<boolean>(false);
 
   const [settings, setSettings] = useState<any>({
     similarity_threshold: 0.75,
@@ -32,6 +43,7 @@ export function SettingsPage() {
     max_failed_scans: 3,
     auto_lock_seconds: 120,
     main_app_api_url: 'http://localhost:8000/api/integrations/face-attendance',
+    main_app_integration_key: 'absensi-kiosk-secret-key-2026',
   });
 
   const [buttons, setButtons] = useState<any[]>([]);
@@ -50,10 +62,34 @@ export function SettingsPage() {
       if (res.data.buttons) setButtons(res.data.buttons);
       if (res.data.locations) setLocations(res.data.locations);
       if (res.data.devices) setDevices(res.data.devices);
-    } catch (err) {
-      toast.error('Gagal memuat pengaturan sistem');
+
+      const pyStatus = await checkPythonEngineHealth();
+      setPyEngineStatus(pyStatus);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal memuat pengaturan sistem');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncPythonCache = async () => {
+    setSyncingPy(true);
+    try {
+      const res = await axios.get('/api/kiosk/employees-cache');
+      if (res.data.employees) {
+        const success = await syncEmployeesToPythonEngine(res.data.employees);
+        if (success) {
+          toast.success(`${res.data.employees.length} data wajah berhasil disinkronkan ke mesin Python`);
+          const pyStatus = await checkPythonEngineHealth();
+          setPyEngineStatus(pyStatus);
+        } else {
+          toast.error('Gagal mengirim data ke mesin Python');
+        }
+      }
+    } catch (err: any) {
+      toast.error('Gagal memuat data karyawan untuk sinkronisasi');
+    } finally {
+      setSyncingPy(false);
     }
   };
 
@@ -61,15 +97,25 @@ export function SettingsPage() {
     e.preventDefault();
     setSaving(true);
     try {
+      const formattedButtons = buttons.map((b) => ({
+        ...b,
+        auto_highlight_start: b.auto_highlight_start
+          ? (b.auto_highlight_start.length === 5 ? `${b.auto_highlight_start}:00` : b.auto_highlight_start)
+          : null,
+        auto_highlight_end: b.auto_highlight_end
+          ? (b.auto_highlight_end.length === 5 ? `${b.auto_highlight_end}:00` : b.auto_highlight_end)
+          : null,
+      }));
+
       const res = await axios.put('/api/hrd/settings', {
         ...settings,
-        buttons,
+        buttons: formattedButtons,
       });
       if (res.data.success) {
-        toast.success('Pengaturan berhasil disimpan');
+        toast.success(res.data.message || 'Pengaturan berhasil disimpan');
       }
-    } catch (err) {
-      toast.error('Gagal menyimpan pengaturan');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal menyimpan pengaturan');
     } finally {
       setSaving(false);
     }
@@ -85,7 +131,7 @@ export function SettingsPage() {
         data: res.data,
       });
       toast.success('Koneksi heartbeat aplikasi utama berhasil');
-    } catch (err) {
+    } catch (err: any) {
       setHeartbeatStatus({
         success: false,
       });
@@ -110,7 +156,7 @@ export function SettingsPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Pengaturan Sistem Kiosk</h1>
             <p className="text-xs text-muted-foreground">
-              Konfigurasi ambang biometrik AI, tombol tipe absen, profil perangkat, dan kredensial HMAC.
+              Konfigurasi ambang biometrik AI, mesin pengenalan wajah Python, tombol presensi, dan integrasi API.
             </p>
           </div>
 
@@ -143,7 +189,7 @@ export function SettingsPage() {
                     Similarity Threshold (Ambang Kemiripan)
                   </Label>
                   <span className="font-mono font-bold text-primary">
-                    {Math.round(settings.similarity_threshold * 100)}%
+                    {Math.round((settings.similarity_threshold ?? 0.75) * 100)}%
                   </span>
                 </div>
                 <input
@@ -152,7 +198,7 @@ export function SettingsPage() {
                   min="0.50"
                   max="0.95"
                   step="0.01"
-                  value={settings.similarity_threshold}
+                  value={settings.similarity_threshold ?? 0.75}
                   onChange={(e) =>
                     setSettings({ ...settings, similarity_threshold: parseFloat(e.target.value) })
                   }
@@ -169,7 +215,7 @@ export function SettingsPage() {
                     Ambiguity Margin (Margin Anti-Wajah-Mirip)
                   </Label>
                   <span className="font-mono font-bold text-primary">
-                    {Math.round(settings.ambiguity_margin * 100)}%
+                    {Math.round((settings.ambiguity_margin ?? 0.08) * 100)}%
                   </span>
                 </div>
                 <input
@@ -178,14 +224,14 @@ export function SettingsPage() {
                   min="0.02"
                   max="0.20"
                   step="0.01"
-                  value={settings.ambiguity_margin}
+                  value={settings.ambiguity_margin ?? 0.08}
                   onChange={(e) =>
                     setSettings({ ...settings, ambiguity_margin: parseFloat(e.target.value) })
                   }
                   className="w-full accent-primary"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Jika selisih skor kandidat #1 dan #2 di bawah batas ini, sistem mewajibkan verifikasi 4 digit ID.
+                  Jika selisih skor kandidat 1 dan 2 di bawah batas ini, sistem mewajibkan verifikasi 4 digit ID.
                 </p>
               </div>
 
@@ -198,7 +244,7 @@ export function SettingsPage() {
                   type="number"
                   min="1"
                   max="5"
-                  value={settings.max_failed_scans}
+                  value={settings.max_failed_scans ?? 3}
                   onChange={(e) =>
                     setSettings({ ...settings, max_failed_scans: parseInt(e.target.value) || 3 })
                   }
@@ -218,7 +264,7 @@ export function SettingsPage() {
                   type="number"
                   min="30"
                   max="600"
-                  value={settings.auto_lock_seconds}
+                  value={settings.auto_lock_seconds ?? 120}
                   onChange={(e) =>
                     setSettings({ ...settings, auto_lock_seconds: parseInt(e.target.value) || 120 })
                   }
@@ -232,13 +278,71 @@ export function SettingsPage() {
           </Card>
 
           <Card className="shadow-xs border">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-base font-semibold flex items-center gap-2">
+                  <BrainCircuit className="h-4 w-4 text-primary" />
+                  <span>Mesin Biometrik Wajah Python (InsightFace ArcFace)</span>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Status layanan microservice pengenalan wajah offline dan ekstraksi 512-dimensi.
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSyncPythonCache}
+                disabled={syncingPy}
+                className="gap-1.5 text-xs h-8"
+              >
+                <RefreshCw className={`h-3 w-3 ${syncingPy ? 'animate-spin' : ''}`} />
+                <span>{syncingPy ? 'Menyinkronkan...' : 'Sinkronkan Cache Vektor'}</span>
+              </Button>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-3 rounded-lg border bg-muted/20 space-y-1">
+                <div className="text-muted-foreground text-[11px]">Status Layanan</div>
+                <div className="flex items-center gap-1.5 font-semibold">
+                  {pyEngineStatus?.available ? (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="text-emerald-600 dark:text-emerald-400">Aktif (Port 8005)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-2 w-2 rounded-full bg-destructive" />
+                      <span className="text-destructive">Tidak Terhubung</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg border bg-muted/20 space-y-1">
+                <div className="text-muted-foreground text-[11px]">Model Deep Learning</div>
+                <div className="font-semibold font-mono text-foreground">
+                  {pyEngineStatus?.version || 'buffalo_s'} (ArcFace 512D)
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg border bg-muted/20 space-y-1">
+                <div className="text-muted-foreground text-[11px]">Anti-Spoofing Liveness</div>
+                <div className="flex items-center gap-1 font-semibold text-purple-600 dark:text-purple-400">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>MediaPipe EAR Kedip Mata</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-xs border">
             <CardHeader>
               <CardTitle className="text-base font-semibold flex items-center gap-2">
                 <Clock className="h-4 w-4 text-primary" />
                 <span>Pengaturan Tombol Tipe Absen & Auto-Highlight</span>
               </CardTitle>
               <CardDescription className="text-xs">
-                Atur label tombol di layar Kiosk dan rentang jam penyorotan otomatis.
+                Atur label tombol di layar Kiosk dan rentang jam penyorotan otomatis (format 24 jam WIB).
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -255,51 +359,61 @@ export function SettingsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {buttons.map((btn: any, idx: number) => (
-                      <tr key={btn.id || btn.attendance_type} className="hover:bg-muted/20">
-                        <td className="py-3 px-4 font-mono font-medium">{btn.attendance_type}</td>
-                        <td className="py-3 px-4">
-                          <Input
-                            type="text"
-                            value={btn.label}
-                            onChange={(e) => handleButtonChange(idx, 'label', e.target.value)}
-                            className="h-8 text-xs max-w-[140px]"
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <Switch
-                            checked={btn.is_enabled}
-                            onCheckedChange={(val) => handleButtonChange(idx, 'is_enabled', val)}
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <Input
-                            type="time"
-                            value={btn.auto_highlight_start || ''}
-                            onChange={(e) => handleButtonChange(idx, 'auto_highlight_start', e.target.value)}
-                            className="h-8 text-xs w-28 font-mono"
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <Input
-                            type="time"
-                            value={btn.auto_highlight_end || ''}
-                            onChange={(e) => handleButtonChange(idx, 'auto_highlight_end', e.target.value)}
-                            className="h-8 text-xs w-28 font-mono"
-                          />
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <Input
-                            type="number"
-                            min="1"
-                            max="10"
-                            value={btn.sort_order || 0}
-                            onChange={(e) => handleButtonChange(idx, 'sort_order', parseInt(e.target.value) || 0)}
-                            className="h-8 text-xs w-16 text-right font-mono inline-block"
-                          />
+                    {buttons.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-6 text-center text-muted-foreground">
+                          Tidak ada konfigurasi tombol absen
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      buttons.map((btn: any, idx: number) => (
+                        <tr key={btn.id || btn.attendance_type} className="hover:bg-muted/20">
+                          <td className="py-3 px-4 font-mono font-medium">{btn.attendance_type}</td>
+                          <td className="py-3 px-4">
+                            <Input
+                              type="text"
+                              value={btn.label || ''}
+                              onChange={(e) => handleButtonChange(idx, 'label', e.target.value)}
+                              className="h-8 text-xs max-w-[140px]"
+                            />
+                          </td>
+                          <td className="py-3 px-4">
+                            <Switch
+                              checked={!!btn.is_enabled}
+                              onCheckedChange={(val) => handleButtonChange(idx, 'is_enabled', val)}
+                            />
+                          </td>
+                          <td className="py-3 px-4">
+                            <Input
+                              type="time"
+                              step="60"
+                              value={btn.auto_highlight_start ? String(btn.auto_highlight_start).slice(0, 5) : ''}
+                              onChange={(e) => handleButtonChange(idx, 'auto_highlight_start', e.target.value)}
+                              className="h-8 text-xs w-28 font-mono"
+                            />
+                          </td>
+                          <td className="py-3 px-4">
+                            <Input
+                              type="time"
+                              step="60"
+                              value={btn.auto_highlight_end ? String(btn.auto_highlight_end).slice(0, 5) : ''}
+                              onChange={(e) => handleButtonChange(idx, 'auto_highlight_end', e.target.value)}
+                              className="h-8 text-xs w-28 font-mono"
+                            />
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <Input
+                              type="number"
+                              min="1"
+                              max="10"
+                              value={btn.sort_order || 0}
+                              onChange={(e) => handleButtonChange(idx, 'sort_order', parseInt(e.target.value) || 0)}
+                              className="h-8 text-xs w-16 text-right font-mono inline-block"
+                            />
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -337,7 +451,7 @@ export function SettingsPage() {
                 <Input
                   id="api_url"
                   type="text"
-                  value={settings.main_app_api_url}
+                  value={settings.main_app_api_url ?? ''}
                   onChange={(e) => setSettings({ ...settings, main_app_api_url: e.target.value })}
                   className="h-9 font-mono text-xs"
                 />
@@ -372,6 +486,72 @@ export function SettingsPage() {
               )}
             </CardContent>
           </Card>
+
+          <Card className="shadow-xs border">
+            <CardHeader>
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <Monitor className="h-4 w-4 text-primary" />
+                <span>Perangkat & Lokasi Kiosk Terdaftar</span>
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Daftar terminal fisik Kiosk dan lokasi operasional yang aktif.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <div className="font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <Monitor className="h-3.5 w-3.5" />
+                    <span>Perangkat Kiosk ({devices.length})</span>
+                  </div>
+                  <div className="space-y-2">
+                    {devices.map((d: any) => (
+                      <div key={d.id} className="p-3 rounded-lg border bg-muted/20 flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-foreground">{d.device_name}</div>
+                          <div className="text-[11px] font-mono text-muted-foreground">Token: {d.device_token}</div>
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">
+                          {d.location?.location_name || 'Lokasi Terdaftar'}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5" />
+                    <span>Lokasi Operasional ({locations.length})</span>
+                  </div>
+                  <div className="space-y-2">
+                    {locations.map((loc: any) => (
+                      <div key={loc.id} className="p-3 rounded-lg border bg-muted/20 flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-foreground">{loc.location_name}</div>
+                          <div className="text-[11px] text-muted-foreground">{loc.kota || 'Kota Pusat'} • Tipe: {loc.location_type}</div>
+                        </div>
+                        <Badge variant="secondary" className="text-[10px] uppercase">
+                          ID: {loc.id}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-end pt-2">
+            <Button
+              type="submit"
+              disabled={saving || loading}
+              className="gap-2 px-6 h-10 font-medium"
+            >
+              <Save className="h-4 w-4" />
+              <span>{saving ? 'Menyimpan Perubahan...' : 'Simpan Semua Pengaturan'}</span>
+            </Button>
+          </div>
         </form>
       </div>
     </HrdLayout>

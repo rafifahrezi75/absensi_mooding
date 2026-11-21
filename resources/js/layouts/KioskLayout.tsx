@@ -45,14 +45,16 @@ export function KioskLayout({
           minute: '2-digit',
           second: '2-digit',
           hour12: false,
+          timeZone: 'Asia/Jakarta',
         })
       );
       setCurrentDate(
         now.toLocaleDateString('id-ID', {
           weekday: 'long',
           year: 'numeric',
-          month: 'short',
+          month: 'long',
           day: 'numeric',
+          timeZone: 'Asia/Jakarta',
         })
       );
     };
@@ -176,7 +178,7 @@ export function KioskLayout({
           <div className="hidden sm:flex flex-col items-end">
             <div className="flex items-center gap-1.5 font-mono text-base font-bold tabular-nums">
               <Clock className="h-4 w-4 text-primary" />
-              <span>{currentTime}</span>
+              <span>{currentTime} WIB</span>
             </div>
             <div className="text-xs text-muted-foreground">{currentDate}</div>
           </div>

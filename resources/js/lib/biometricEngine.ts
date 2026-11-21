@@ -82,6 +82,360 @@ export function computeEyeAspectRatio(eyePoints: any[]): number {
   return (distVertical1 + distVertical2) / (2.0 * distHorizontal);
 }
 
+export type ChallengeType = 'BLINK' | 'TURN_LEFT' | 'TURN_RIGHT' | 'OPEN_MOUTH';
+
+export class ActiveChallengeDetector {
+  private currentChallenge: ChallengeType = 'BLINK';
+  private state: 'waiting_face' | 'prompting' | 'action_started' | 'action_completed' = 'waiting_face';
+  private startTimestamp: number = 0;
+  private lastVerifiedTimestamp: number = 0;
+  private baselineNoseRatio: number = 0.5;
+
+  constructor(initialChallenge: ChallengeType = 'BLINK') {
+    this.currentChallenge = initialChallenge;
+  }
+
+  public setChallenge(challenge: ChallengeType) {
+    this.currentChallenge = challenge;
+    this.reset();
+  }
+
+  public getChallenge(): ChallengeType {
+    return this.currentChallenge;
+  }
+
+  public pickRandomChallenge(allowed: ChallengeType[] = ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'OPEN_MOUTH']): ChallengeType {
+    const list = allowed && allowed.length > 0 ? allowed : ['BLINK', 'TURN_LEFT', 'TURN_RIGHT', 'OPEN_MOUTH'];
+    const chosen = list[Math.floor(Math.random() * list.length)];
+    this.setChallenge(chosen);
+    return chosen;
+  }
+
+  public reset() {
+    this.state = 'waiting_face';
+    this.startTimestamp = 0;
+    this.lastVerifiedTimestamp = 0;
+  }
+
+  public update(landmarks: any): {
+    verified: boolean;
+    stage: string;
+    text: string;
+    subtext: string;
+    badgeClass: string;
+    borderClass: string;
+  } {
+    if (!landmarks) {
+      this.state = 'waiting_face';
+      return {
+        verified: false,
+        stage: 'no_face',
+        text: 'Posisikan Wajah',
+        subtext: 'Arahkan wajah ke dalam lingkaran panduan',
+        badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+        borderClass: 'border-white/30 scale-100',
+      };
+    }
+
+    const now = Date.now();
+    if (now - this.lastVerifiedTimestamp < 1500) {
+      return {
+        verified: false,
+        stage: 'verified',
+        text: 'Tantangan Terverifikasi!',
+        subtext: 'Mencocokkan biometrik...',
+        badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+        borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
+      };
+    }
+
+    let avgEar = 0.3;
+    let noseRatio = 0.5;
+    let mar = 0.1;
+
+    try {
+      const leftEye = landmarks.getLeftEye();
+      const rightEye = landmarks.getRightEye();
+      const leftEar = computeEyeAspectRatio(leftEye);
+      const rightEar = computeEyeAspectRatio(rightEye);
+      avgEar = (leftEar + rightEar) / 2.0;
+
+      const positions = landmarks.positions;
+      if (positions && positions.length >= 68) {
+        const jawLeft = positions[0];
+        const jawRight = positions[16];
+        const noseTip = positions[30];
+        const jawWidth = Math.hypot(jawRight.x - jawLeft.x, jawRight.y - jawLeft.y);
+        if (jawWidth > 0) {
+          noseRatio = (noseTip.x - jawLeft.x) / jawWidth;
+        }
+
+        const lipTop = positions[62];
+        const lipBot = positions[66];
+        const mouthLeft = positions[60];
+        const mouthRight = positions[64];
+        const mouthWidth = Math.hypot(mouthRight.x - mouthLeft.x, mouthRight.y - mouthLeft.y);
+        const mouthHeight = Math.hypot(lipBot.x - lipTop.x, lipBot.y - lipTop.y);
+        if (mouthWidth > 0) {
+          mar = mouthHeight / mouthWidth;
+        }
+      }
+    } catch {
+      return {
+        verified: false,
+        stage: 'error',
+        text: 'Posisikan Wajah',
+        subtext: 'Menyelaraskan titik wajah...',
+        badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+        borderClass: 'border-white/30 scale-100',
+      };
+    }
+
+    if (this.currentChallenge === 'BLINK') {
+      if (this.state === 'waiting_face' || this.state === 'prompting') {
+        if (avgEar < 0.20) {
+          this.state = 'action_started';
+          this.startTimestamp = now;
+          return {
+            verified: false,
+            stage: 'action_started',
+            text: 'Mata Tertutup...',
+            subtext: 'Buka mata kembali untuk menyelesaikan verifikasi',
+            badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+            borderClass: 'border-amber-400 scale-100 shadow-[0_0_25px_rgba(251,191,36,0.35)]',
+          };
+        } else {
+          this.state = 'prompting';
+          return {
+            verified: false,
+            stage: 'prompting',
+            text: 'Kedipkan Mata',
+            subtext: 'Silakan kedipkan mata untuk verifikasi keaslian',
+            badgeClass: 'bg-sky-500/20 text-sky-400 border-sky-500/40 animate-pulse',
+            borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
+          };
+        }
+      }
+
+      if (this.state === 'action_started') {
+        const duration = now - this.startTimestamp;
+        if (avgEar >= 0.24 && duration >= 60 && duration <= 1500) {
+          this.state = 'action_completed';
+          this.lastVerifiedTimestamp = now;
+          return {
+            verified: true,
+            stage: 'verified',
+            text: 'Kedipan Terverifikasi!',
+            subtext: 'Liveness terkonfirmasi, memproses verifikasi...',
+            badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+            borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
+          };
+        }
+        if (duration > 2000) {
+          this.state = 'prompting';
+        }
+        return {
+          verified: false,
+          stage: 'action_started',
+          text: 'Mata Tertutup...',
+          subtext: 'Buka mata kembali',
+          badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+          borderClass: 'border-amber-400 scale-100',
+        };
+      }
+    }
+
+    if (this.currentChallenge === 'TURN_LEFT') {
+      if (noseRatio < 0.38) {
+        this.lastVerifiedTimestamp = now;
+        return {
+          verified: true,
+          stage: 'verified',
+          text: 'Tengok Kiri Terverifikasi!',
+          subtext: 'Gerakan terkonfirmasi, memproses verifikasi...',
+          badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+          borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
+        };
+      }
+      return {
+        verified: false,
+        stage: 'prompting',
+        text: 'Tengok ke Kiri',
+        subtext: 'Arahkan wajah sedikit ke kiri Anda',
+        badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
+        borderClass: 'border-indigo-400 scale-100 shadow-[0_0_25px_rgba(99,102,241,0.35)]',
+      };
+    }
+
+    if (this.currentChallenge === 'TURN_RIGHT') {
+      if (noseRatio > 0.62) {
+        this.lastVerifiedTimestamp = now;
+        return {
+          verified: true,
+          stage: 'verified',
+          text: 'Tengok Kanan Terverifikasi!',
+          subtext: 'Gerakan terkonfirmasi, memproses verifikasi...',
+          badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+          borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
+        };
+      }
+      return {
+        verified: false,
+        stage: 'prompting',
+        text: 'Tengok ke Kanan',
+        subtext: 'Arahkan wajah sedikit ke kanan Anda',
+        badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
+        borderClass: 'border-indigo-400 scale-100 shadow-[0_0_25px_rgba(99,102,241,0.35)]',
+      };
+    }
+
+    if (this.currentChallenge === 'OPEN_MOUTH') {
+      if (mar > 0.38) {
+        this.lastVerifiedTimestamp = now;
+        return {
+          verified: true,
+          stage: 'verified',
+          text: 'Buka Mulut Terverifikasi!',
+          subtext: 'Gerakan terkonfirmasi, memproses verifikasi...',
+          badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+          borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
+        };
+      }
+      return {
+        verified: false,
+        stage: 'prompting',
+        text: 'Buka Sedikit Mulut',
+        subtext: 'Buka sedikit mulut untuk verifikasi keaslian',
+        badgeClass: 'bg-purple-500/20 text-purple-400 border-purple-500/40 animate-pulse',
+        borderClass: 'border-purple-400 scale-100 shadow-[0_0_25px_rgba(168,85,247,0.35)]',
+      };
+    }
+
+    return {
+      verified: false,
+      stage: 'prompting',
+      text: 'Posisikan Wajah',
+      subtext: 'Ikuti instruksi gerakan',
+      badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+      borderClass: 'border-white/30 scale-100',
+    };
+  }
+}
+
+export type BlinkStage = 'no_face' | 'eyes_open' | 'eyes_closing' | 'blink_verified';
+
+export class BlinkDetector {
+  private state: 'waiting_face' | 'eyes_open' | 'eyes_closed' = 'waiting_face';
+  private closedTimestamp: number = 0;
+  private lastBlinkTimestamp: number = 0;
+  private readonly closedEarThreshold: number = 0.20;
+  private readonly openEarThreshold: number = 0.24;
+
+  public update(landmarks: any): {
+    stage: BlinkStage;
+    avgEar: number;
+    blinkDetected: boolean;
+  } {
+    if (!landmarks) {
+      this.state = 'waiting_face';
+      return { stage: 'no_face', avgEar: 0, blinkDetected: false };
+    }
+
+    let avgEar = 0.3;
+    try {
+      const leftEye = landmarks.getLeftEye();
+      const rightEye = landmarks.getRightEye();
+      const leftEar = computeEyeAspectRatio(leftEye);
+      const rightEar = computeEyeAspectRatio(rightEye);
+      avgEar = (leftEar + rightEar) / 2.0;
+    } catch {
+      return { stage: 'no_face', avgEar: 0, blinkDetected: false };
+    }
+
+    const now = Date.now();
+
+    if (now - this.lastBlinkTimestamp < 1500) {
+      return { stage: 'blink_verified', avgEar, blinkDetected: false };
+    }
+
+    if (this.state === 'waiting_face' || this.state === 'eyes_open') {
+      if (avgEar < this.closedEarThreshold) {
+        this.state = 'eyes_closed';
+        this.closedTimestamp = now;
+        return { stage: 'eyes_closing', avgEar, blinkDetected: false };
+      } else {
+        this.state = 'eyes_open';
+        return { stage: 'eyes_open', avgEar, blinkDetected: false };
+      }
+    }
+
+    if (this.state === 'eyes_closed') {
+      const duration = now - this.closedTimestamp;
+      if (avgEar >= this.openEarThreshold) {
+        if (duration >= 60 && duration <= 1200) {
+          this.state = 'eyes_open';
+          this.lastBlinkTimestamp = now;
+          return { stage: 'blink_verified', avgEar, blinkDetected: true };
+        } else {
+          this.state = 'eyes_open';
+          return { stage: 'eyes_open', avgEar, blinkDetected: false };
+        }
+      } else if (duration > 2000) {
+        this.state = 'eyes_open';
+        return { stage: 'eyes_open', avgEar, blinkDetected: false };
+      } else {
+        return { stage: 'eyes_closing', avgEar, blinkDetected: false };
+      }
+    }
+
+    return { stage: 'eyes_open', avgEar, blinkDetected: false };
+  }
+
+  public reset() {
+    this.state = 'waiting_face';
+    this.closedTimestamp = 0;
+    this.lastBlinkTimestamp = 0;
+  }
+}
+
+export function getBlinkInstruction(stage: BlinkStage): {
+  text: string;
+  subtext: string;
+  badgeClass: string;
+  borderClass: string;
+} {
+  switch (stage) {
+    case 'no_face':
+      return {
+        text: 'Posisikan Wajah',
+        subtext: 'Arahkan wajah ke dalam lingkaran panduan',
+        badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+        borderClass: 'border-white/30 scale-100',
+      };
+    case 'eyes_open':
+      return {
+        text: 'Silakan Kedipkan Mata',
+        subtext: 'Verifikasi wajah asli seperti verifikasi bank',
+        badgeClass: 'bg-sky-500/20 text-sky-400 border-sky-500/40 animate-pulse',
+        borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
+      };
+    case 'eyes_closing':
+      return {
+        text: 'Mata Tertutup...',
+        subtext: 'Buka mata kembali untuk menyelesaikan verifikasi',
+        badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+        borderClass: 'border-amber-400 scale-100 shadow-[0_0_25px_rgba(251,191,36,0.35)]',
+      };
+    case 'blink_verified':
+      return {
+        text: 'Kedipan Terverifikasi!',
+        subtext: 'Liveness terkonfirmasi, mencocokkan biometrik...',
+        badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+        borderClass: 'border-emerald-500 scale-105 shadow-[0_0_35px_rgba(16,185,129,0.7)]',
+      };
+  }
+}
+
 export function verifyLivenessFromLandmarks(landmarks: any): boolean {
   if (!landmarks) return false;
   try {
@@ -107,7 +461,7 @@ export function matchFaceToEmployees(
   detectedDescriptor: number[],
   cachedEmployees: any[],
   currentLocation: any,
-  maxDistanceThreshold: number = 0.55,
+  maxDistanceThreshold: number = 0.40,
   ambiguityMargin: number = 0.08
 ): {
   matched: boolean;
@@ -152,7 +506,7 @@ export function matchFaceToEmployees(
 
       let minDistance = 999.0;
       for (const emb of emp.embeddings) {
-        if (!emb.vector || emb.vector.length === 0) continue;
+        if (!emb.vector || emb.vector.length === 0 || emb.vector.length !== detectedDescriptor.length) continue;
         const d = calculateDistance(detectedDescriptor, emb.vector);
         if (d < minDistance) {
           minDistance = d;
@@ -291,4 +645,111 @@ export function compressProofPhoto(
   }
 
   return canvas.toDataURL('image/jpeg', quality);
+}
+
+const PYTHON_ENGINE_URL = '/api/face-engine';
+
+export async function checkPythonEngineHealth(): Promise<{
+  available: boolean;
+  version?: string;
+  loaded?: boolean;
+}> {
+  try {
+    const res = await fetch(`${PYTHON_ENGINE_URL}/health`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return { available: false };
+    const data = await res.json();
+    return {
+      available: data.status === 'ok',
+      version: data.model_version,
+      loaded: data.model_loaded,
+    };
+  } catch (err) {
+    return { available: false };
+  }
+}
+
+export async function syncEmployeesToPythonEngine(employees: any[]): Promise<boolean> {
+  try {
+    const formatted = employees.map((emp) => ({
+      employee_id: emp.id || emp.employee_id,
+      external_karyawan_id: emp.id || emp.external_karyawan_id,
+      company_id: emp.company_id || 1,
+      entitasshelter_id: emp.entitasshelter_id || null,
+      cabang_id: emp.cabang_id || null,
+      proyek_id: emp.proyek_id || null,
+      id_karyawan: emp.id_karyawan,
+      id_absensi: emp.id_absensi || null,
+      nama_karyawan: emp.nama_karyawan,
+      embeddings: (emp.embeddings || []).map((e: any) => e.vector || e),
+    }));
+
+    const res = await fetch(`${PYTHON_ENGINE_URL}/api/v1/cache/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ replace_all: true, employees: formatted }),
+    });
+    return res.ok;
+  } catch (err) {
+    return false;
+  }
+}
+
+export async function captureBurstFrames(
+  video: HTMLVideoElement,
+  count: number = 4,
+  intervalMs: number = 300
+): Promise<Blob[]> {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.min(video.videoWidth || 640, 640);
+  canvas.height = Math.min(video.videoHeight || 480, 480);
+  const ctx = canvas.getContext('2d');
+
+  const blobs: Blob[] = [];
+
+  for (let i = 0; i < count; i++) {
+    if (ctx && video.readyState >= 2) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.85);
+      });
+      if (blob) blobs.push(blob);
+    }
+    if (i < count - 1) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+
+  return blobs;
+}
+
+export async function recognizeFaceWithPython(
+  frames: Blob[],
+  companyId: number,
+  allowedCompanyIds: number[],
+  proyekId?: number,
+  cabangId?: number,
+  challengeType: string = 'BLINK'
+): Promise<any> {
+  const formData = new FormData();
+  frames.forEach((blob, idx) => {
+    formData.append('frames', blob, `frame_${idx}.jpg`);
+  });
+  formData.append('company_id', companyId.toString());
+  formData.append('allowed_company_ids', JSON.stringify(allowedCompanyIds));
+  if (proyekId) formData.append('proyek_id', proyekId.toString());
+  if (cabangId) formData.append('cabang_id', cabangId.toString());
+  formData.append('challenge_type', challengeType);
+
+  const res = await fetch(`${PYTHON_ENGINE_URL}/api/v1/recognize`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    return { status: 'error', decision: 'ERROR' };
+  }
+  return await res.json();
 }

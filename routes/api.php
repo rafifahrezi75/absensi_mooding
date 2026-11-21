@@ -1,9 +1,12 @@
 <?php
 
+use App\Http\Controllers\Api\FaceEngineProxyController;
 use App\Http\Controllers\Api\HrdController;
 use App\Http\Controllers\Api\IntegrationController;
 use App\Http\Controllers\Api\KioskController;
 use Illuminate\Support\Facades\Route;
+
+Route::any('/face-engine/{path?}', [FaceEngineProxyController::class, 'proxy'])->where('path', '.*');
 
 Route::prefix('integrations/face-attendance')->group(function () {
     Route::get('/heartbeat', [IntegrationController::class, 'heartbeat']);
@@ -25,6 +28,9 @@ Route::prefix('hrd')->group(function () {
     Route::get('/me', [HrdController::class, 'me']);
     Route::get('/dashboard', [HrdController::class, 'dashboard']);
     Route::get('/employees', [HrdController::class, 'employees']);
+    Route::get('/employees/{id}', [HrdController::class, 'showEmployee']);
+    Route::post('/employees/{id}/upload-profile-photo', [HrdController::class, 'uploadProfilePhoto']);
+    Route::delete('/employees/{id}/profile-photo', [HrdController::class, 'deleteProfilePhoto']);
     Route::post('/employees/{id}/enroll-face', [HrdController::class, 'enrollFace']);
     Route::post('/employees/{id}/reset-pin', [HrdController::class, 'resetPin']);
     Route::get('/logs', [HrdController::class, 'logs']);
