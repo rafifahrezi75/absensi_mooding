@@ -27,12 +27,11 @@ class FaceEngineProxyController extends Controller
         try {
             $httpRequest = Http::withHeaders([
                 'X-Biometric-Secret' => (string) config('biometric.shared_secret'),
-            ]);
+            ])->connectTimeout(5)->timeout(30);
 
             if ($method === 'GET') {
-                $response = $httpRequest->connectTimeout(1)->timeout(5)->get($engineUrl, $request->query());
+                $response = $httpRequest->get($engineUrl, $request->query());
             } elseif (count($request->allFiles()) > 0) {
-                $httpRequest = $httpRequest->connectTimeout(2)->timeout(30);
                 foreach ($request->allFiles() as $name => $files) {
                     if (is_array($files)) {
                         foreach ($files as $file) {
@@ -46,10 +45,10 @@ class FaceEngineProxyController extends Controller
             } else {
                 $payload = $request->json()->all();
                 if (! empty($payload)) {
-                    $response = $httpRequest->connectTimeout(2)->timeout(30)->post($engineUrl, $payload);
+                    $response = $httpRequest->post($engineUrl, $payload);
                 } else {
                     $raw = $request->getContent();
-                    $response = $httpRequest->connectTimeout(2)->timeout(30)
+                    $response = $httpRequest
                         ->withBody($raw, $request->header('Content-Type', 'application/json'))
                         ->send($method, $engineUrl);
                 }

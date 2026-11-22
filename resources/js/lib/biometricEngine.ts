@@ -9,12 +9,28 @@ export async function loadBiometricModels(): Promise<void> {
 
   modelLoadingPromise = (async () => {
     const modelPath = '/models';
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(modelPath),
-      faceapi.nets.faceLandmark68Net.loadFromUri(modelPath),
-      faceapi.nets.faceRecognitionNet.loadFromUri(modelPath),
-    ]);
-    modelsLoaded = true;
+    let retries = 5;
+    while (retries > 0) {
+      try {
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(modelPath),
+          faceapi.nets.faceLandmark68Net.loadFromUri(modelPath),
+        ]);
+        modelsLoaded = true;
+        break;
+      } catch (err) {
+        retries--;
+        if (retries === 0) {
+          console.warn('Browser face models failed to load, running in server-only mode');
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 800 * (6 - retries)));
+      }
+    }
+
+    if (modelsLoaded) {
+      faceapi.nets.faceRecognitionNet.loadFromUri(modelPath).catch(() => {});
+    }
   })();
 
   return modelLoadingPromise;

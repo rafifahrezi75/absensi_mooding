@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import {
   loadBiometricModels,
+  isBiometricModelsLoaded,
   detectFaceFast,
   assessLightingQuality,
   checkPythonEngineHealth,
@@ -81,11 +82,9 @@ export function KioskPage() {
 
     loadBiometricModels()
       .then(() => {
-        setModelReady(true);
+        setModelReady(isBiometricModelsLoaded());
       })
-      .catch(() => {
-        toast.error('Gagal memuat model neural network wajah');
-      });
+      .catch(() => {});
 
     return () => {
       stopCamera();
@@ -132,18 +131,32 @@ export function KioskPage() {
         }
       }
 
-      const pyStatus = await checkPythonEngineHealth();
-      if (pyStatus.available) {
-        setPythonEngineActive(true);
-      } else {
-        setPythonEngineActive(false);
-      }
+      const checkEngine = async () => {
+        const pyStatus = await checkPythonEngineHealth();
+        if (pyStatus.available) {
+          setPythonEngineActive(true);
+        } else {
+          setPythonEngineActive(false);
+          setTimeout(async () => {
+            const retryStatus = await checkPythonEngineHealth();
+            if (retryStatus.available) {
+              setPythonEngineActive(true);
+            }
+          }, 2000);
+        }
+      };
+      checkEngine();
     } catch (err) {}
   };
 
   const startCamera = async () => {
     stopCamera();
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        toast.error('Akses kamera memerlukan HTTPS');
+        setCameraActive(false);
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
@@ -160,7 +173,7 @@ export function KioskPage() {
           setCameraActive(true);
         };
       }
-    } catch (err) {
+    } catch (err: any) {
       setCameraActive(false);
       toast.error('Kamera tidak dapat diakses');
     }
@@ -270,15 +283,20 @@ export function KioskPage() {
     scanLockRef.current = false;
   };
 
+  const serverOnlyTimerRef = useRef<number>(0);
+
   useEffect(() => {
     const loopInterval = setInterval(async () => {
       if (
         !videoRef.current ||
         !cameraActive ||
-        !modelReady ||
         scanLockRef.current ||
         isDetectingRef.current
       ) {
+        return;
+      }
+
+      if (!modelReady && !pythonEngineActive) {
         return;
       }
 
@@ -290,6 +308,33 @@ export function KioskPage() {
       isDetectingRef.current = true;
 
       try {
+        if (!modelReady && pythonEngineActive) {
+          const now = Date.now();
+          if (now - lastLivenessCaptureRef.current >= 120 && videoRef.current) {
+            const frame = await captureFrameBlob(videoRef.current);
+            if (frame) {
+              livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-4);
+              lastLivenessCaptureRef.current = now;
+            }
+          }
+
+          setChallengeUI({
+            text: 'Tengok Kiri / Kanan',
+            subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
+            badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
+            borderClass: 'border-indigo-400 scale-100 shadow-[0_0_25px_rgba(99,102,241,0.35)]',
+          });
+
+          serverOnlyTimerRef.current++;
+          if (serverOnlyTimerRef.current >= 15 && livenessFramesRef.current.length >= 2) {
+            serverOnlyTimerRef.current = 0;
+            const challengeFrames = [...livenessFramesRef.current];
+            livenessFramesRef.current = [];
+            await triggerRecognition('CLIENT_VERIFIED', challengeFrames);
+          }
+          return;
+        }
+
         const detection = await detectFaceFast(videoRef.current);
 
         if (overlayCanvasRef.current && videoRef.current) {
