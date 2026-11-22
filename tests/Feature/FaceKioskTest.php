@@ -9,6 +9,7 @@ use App\Models\HrdUser;
 use App\Models\SystemSetting;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class FaceKioskTest extends TestCase
@@ -310,8 +311,10 @@ class FaceKioskTest extends TestCase
 
     public function test_hrd_enroll_face_with_photo_base64(): void
     {
+        Storage::fake('public');
         $emp = Employee::first();
         $this->assertNotNull($emp);
+        $originalPhoto = $emp->profile_photo_path;
 
         $fakePhotoBase64 = 'data:image/jpeg;base64,'.base64_encode('fake-jpg-content');
         Http::fake();
@@ -337,6 +340,7 @@ class FaceKioskTest extends TestCase
         if ($embeddingId) {
             FaceEmbedding::find($embeddingId)?->delete();
         }
+        $emp->update(['profile_photo_path' => $originalPhoto]);
     }
 
     public function test_kiosk_biometric_decision_verified_records_attendance_and_audit(): void
@@ -494,6 +498,7 @@ class FaceKioskTest extends TestCase
 
     public function test_hrd_upload_and_delete_profile_photo(): void
     {
+        Storage::fake('public');
         $emp = Employee::first();
         $this->assertNotNull($emp);
         $originalPhoto = $emp->profile_photo_path;
@@ -538,10 +543,30 @@ class FaceKioskTest extends TestCase
         $response = $this->getJson('/api/face-engine/api/v1/gallery/collision-scan');
         $response->assertNotFound();
 
-        $enrollResponse = $this->postJson('/api/face-engine/api/v1/enroll', []);
-        $enrollResponse->assertNotFound();
+        $adminResponse = $this->postJson('/api/face-engine/api/v1/admin/purge', []);
+        $adminResponse->assertNotFound();
 
         Http::assertNothingSent();
+    }
+
+    public function test_face_engine_proxy_allows_enroll_endpoint(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            config('biometric.engine_url').'/api/v1/enroll' => Http::response([
+                'mean_embedding' => array_fill(0, 512, 0.1),
+                'model_name' => 'buffalo_s',
+                'model_version' => 'arcface_r50_v1',
+            ]),
+        ]);
+
+        $response = $this->postJson('/api/face-engine/api/v1/enroll', []);
+        $response->assertOk();
+
+        Http::assertSent(fn ($request) => $request->hasHeader(
+            'X-Biometric-Secret',
+            config('biometric.shared_secret')
+        ));
     }
 
     public function test_face_engine_proxy_adds_internal_secret_header(): void

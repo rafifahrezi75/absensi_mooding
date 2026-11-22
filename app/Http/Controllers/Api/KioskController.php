@@ -414,18 +414,6 @@ class KioskController extends Controller
                 $fileName = 'proofs/proof_'.Str::slug($validated['idempotency_key']).'.'.$type;
                 Storage::disk('public')->put($fileName, $photoDecoded);
                 $photoPath = $fileName;
-
-                $latestEmbeddingWithoutPhoto = FaceEmbedding::where('employee_id', $employee->id)
-                    ->where('is_active', true)
-                    ->whereNull('photo_path')
-                    ->latest()
-                    ->first();
-
-                if ($latestEmbeddingWithoutPhoto) {
-                    $latestEmbeddingWithoutPhoto->update([
-                        'photo_path' => $fileName,
-                    ]);
-                }
             }
         }
 

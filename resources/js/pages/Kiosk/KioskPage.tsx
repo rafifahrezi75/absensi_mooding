@@ -671,7 +671,7 @@ export function KioskPage() {
                   scanStatus === 'success'
                     ? 'border-emerald-500 scale-105 shadow-[0_0_40px_rgba(16,185,129,0.6)]'
                     : scanStatus === 'scanning'
-                    ? 'border-primary animate-pulse scale-100 shadow-[0_0_30px_rgba(59,130,246,0.5)]'
+                    ? 'border-primary animate-pulse scale-100 shadow-[0_0_30px_rgba(76,88,111,0.6)]'
                     : challengeUI.borderClass
                 }`}
               >

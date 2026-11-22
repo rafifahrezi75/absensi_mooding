@@ -359,7 +359,10 @@ class HrdController extends Controller
         }
 
         if ($employee->profile_photo_path && Storage::disk('public')->exists($employee->profile_photo_path)) {
-            Storage::disk('public')->delete($employee->profile_photo_path);
+            $isUsedByBiometric = FaceEmbedding::where('photo_path', $employee->profile_photo_path)->exists();
+            if (! $isUsedByBiometric) {
+                Storage::disk('public')->delete($employee->profile_photo_path);
+            }
         }
 
         $fileName = null;
@@ -409,7 +412,10 @@ class HrdController extends Controller
         $employee = Employee::findOrFail($id);
 
         if ($employee->profile_photo_path && Storage::disk('public')->exists($employee->profile_photo_path)) {
-            Storage::disk('public')->delete($employee->profile_photo_path);
+            $isUsedByBiometric = FaceEmbedding::where('photo_path', $employee->profile_photo_path)->exists();
+            if (! $isUsedByBiometric) {
+                Storage::disk('public')->delete($employee->profile_photo_path);
+            }
         }
 
         $employee->update([
@@ -543,8 +549,12 @@ class HrdController extends Controller
         ];
         if (! $employee->profile_photo_path) {
             $latestWithPhoto = collect($createdEmbeddings)->first(fn ($e) => ! empty($e->photo_path));
-            if ($latestWithPhoto) {
-                $updateData['profile_photo_path'] = $latestWithPhoto->photo_path;
+            if ($latestWithPhoto && $latestWithPhoto->photo_path && Storage::disk('public')->exists($latestWithPhoto->photo_path)) {
+                $content = Storage::disk('public')->get($latestWithPhoto->photo_path);
+                $ext = pathinfo($latestWithPhoto->photo_path, PATHINFO_EXTENSION) ?: 'jpg';
+                $profileName = 'profiles/profile_'.$employee->id.'_'.time().'_'.Str::random(6).'.'.$ext;
+                Storage::disk('public')->put($profileName, $content);
+                $updateData['profile_photo_path'] = $profileName;
             }
         }
         $employee->update($updateData);

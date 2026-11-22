@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Storage;
 
 class Employee extends Model
 {
@@ -45,13 +45,19 @@ class Employee extends Model
 
     public function getProfilePhotoUrlAttribute(): ?string
     {
-        if ($this->profile_photo_path) {
-            return '/storage/' . $this->profile_photo_path;
+        if ($this->profile_photo_path && Storage::disk('public')->exists($this->profile_photo_path)) {
+            return '/storage/'.$this->profile_photo_path;
         }
 
-        $face = $this->faceEmbeddings()->where('is_active', true)->whereNotNull('photo_path')->latest()->first();
+        $face = $this->faceEmbeddings()
+            ->where('is_active', true)
+            ->whereNotNull('photo_path')
+            ->latest()
+            ->get()
+            ->first(fn ($embedding) => Storage::disk('public')->exists($embedding->photo_path));
+
         if ($face && $face->photo_path) {
-            return '/storage/' . $face->photo_path;
+            return '/storage/'.$face->photo_path;
         }
 
         return null;

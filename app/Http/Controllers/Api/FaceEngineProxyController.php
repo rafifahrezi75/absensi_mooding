@@ -14,7 +14,7 @@ class FaceEngineProxyController extends Controller
         $normalizedPath = trim($path, '/');
         $allowedRequests = [
             'GET' => ['health'],
-            'POST' => ['api/v1/recognize'],
+            'POST' => ['api/v1/recognize', 'api/v1/enroll'],
         ];
         $method = strtoupper($request->method());
 
