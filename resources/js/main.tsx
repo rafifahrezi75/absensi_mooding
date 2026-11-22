@@ -1,5 +1,6 @@
 import React, { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
+import type { Root } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from '@/context/theme-provider';
 import { Toaster } from 'sonner';
@@ -38,7 +39,11 @@ function App() {
 
 const rootElement = document.getElementById('root');
 if (rootElement) {
-  ReactDOM.createRoot(rootElement).render(
+  const rootWithInstance = rootElement as HTMLElement & { reactRoot?: Root };
+  const reactRoot = rootWithInstance.reactRoot ?? ReactDOM.createRoot(rootElement);
+  rootWithInstance.reactRoot = reactRoot;
+
+  reactRoot.render(
     <StrictMode>
       <App />
     </StrictMode>

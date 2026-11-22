@@ -8,15 +8,17 @@ import {
   LogIn,
   LogOut,
   Coffee,
+  Check,
   CheckCircle2,
   Clock,
-  Sparkles,
+  AlertCircle,
   KeyRound,
   RefreshCw,
   SunMedium,
   UserCheck,
   Eye,
   EyeOff,
+  Smile,
   ScanFace,
   ShieldCheck,
 } from 'lucide-react';
@@ -35,6 +37,14 @@ import { cacheEmployees, getCachedEmployees } from '@/lib/offlineQueue';
 import axios from 'axios';
 import { toast } from 'sonner';
 
+const ERROR_COOLDOWN_MS = {
+  info: 3000,
+  warning: 4000,
+  error: 5000,
+} as const;
+const ERROR_TOAST_ID = 'kiosk-biometric-error';
+const CAMERA_TOAST_ID = 'kiosk-camera-error';
+
 export function KioskPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -51,7 +61,8 @@ export function KioskPage() {
     label: 'Mendeteksi cahaya...',
   });
 
-  const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'success'>('idle');
+  const [scanStatus, setScanStatus] = useState<'idle' | 'scanning' | 'success' | 'cooldown'>('idle');
+  const [cooldownSeconds, setCooldownSeconds] = useState<number>(0);
   const [lastResult, setLastResult] = useState<any>(null);
   const [failedCount, setFailedCount] = useState<number>(0);
   const [pythonEngineActive, setPythonEngineActive] = useState<boolean>(false);
@@ -74,6 +85,10 @@ export function KioskPage() {
   const livenessFramesRef = useRef<Blob[]>([]);
   const lastLivenessCaptureRef = useRef<number>(0);
   const lastDetectionTimeRef = useRef<number>(Date.now());
+  const errorCooldownTimeoutRef = useRef<number | null>(null);
+  const errorCooldownIntervalRef = useRef<number | null>(null);
+  const successTimeoutRef = useRef<number | null>(null);
+  const serverOnlyTimerRef = useRef<number>(0);
 
   useEffect(() => {
     loadConfig();
@@ -88,6 +103,15 @@ export function KioskPage() {
 
     return () => {
       stopCamera();
+      if (errorCooldownTimeoutRef.current !== null) {
+        window.clearTimeout(errorCooldownTimeoutRef.current);
+      }
+      if (errorCooldownIntervalRef.current !== null) {
+        window.clearInterval(errorCooldownIntervalRef.current);
+      }
+      if (successTimeoutRef.current !== null) {
+        window.clearTimeout(successTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -96,6 +120,7 @@ export function KioskPage() {
       const res = await axios.get('/api/kiosk/config');
       setConfig(res.data);
       autoSelectButton(res.data.buttons);
+      activeDetectorRef.current.pickRandomChallenge(res.data.settings?.allowed_challenges);
     } catch (err) {}
   };
 
@@ -153,7 +178,10 @@ export function KioskPage() {
     stopCamera();
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        toast.error('Akses kamera memerlukan HTTPS');
+        toast.error('Akses kamera memerlukan HTTPS', {
+          id: CAMERA_TOAST_ID,
+          duration: ERROR_COOLDOWN_MS.error,
+        });
         setCameraActive(false);
         return;
       }
@@ -175,7 +203,10 @@ export function KioskPage() {
       }
     } catch (err: any) {
       setCameraActive(false);
-      toast.error('Kamera tidak dapat diakses');
+      toast.error('Kamera tidak dapat diakses', {
+        id: CAMERA_TOAST_ID,
+        duration: ERROR_COOLDOWN_MS.error,
+      });
     }
   };
 
@@ -192,6 +223,58 @@ export function KioskPage() {
     setCameraActive(false);
   };
 
+  const beginErrorCooldown = (
+    message: string,
+    severity: 'info' | 'warning' | 'error' = 'warning',
+    openFallback: boolean = false
+  ) => {
+    if (errorCooldownTimeoutRef.current !== null) {
+      window.clearTimeout(errorCooldownTimeoutRef.current);
+    }
+    if (errorCooldownIntervalRef.current !== null) {
+      window.clearInterval(errorCooldownIntervalRef.current);
+    }
+
+    const cooldownMs = ERROR_COOLDOWN_MS[severity];
+    const cooldownEndsAt = Date.now() + cooldownMs;
+    scanLockRef.current = true;
+    livenessFramesRef.current = [];
+    serverOnlyTimerRef.current = 0;
+    activeDetectorRef.current.reset();
+    setScanStatus('cooldown');
+    setCooldownSeconds(Math.ceil(cooldownMs / 1000));
+
+    const toastOptions = { id: ERROR_TOAST_ID, duration: cooldownMs };
+    if (severity === 'error') {
+      toast.error(message, toastOptions);
+    } else if (severity === 'info') {
+      toast.info(message, toastOptions);
+    } else {
+      toast.warning(message, toastOptions);
+    }
+
+    if (openFallback) {
+      setIsFallbackOpen(true);
+    }
+
+    errorCooldownIntervalRef.current = window.setInterval(() => {
+      setCooldownSeconds(Math.max(0, Math.ceil((cooldownEndsAt - Date.now()) / 1000)));
+    }, 250);
+
+    errorCooldownTimeoutRef.current = window.setTimeout(() => {
+      if (errorCooldownIntervalRef.current !== null) {
+        window.clearInterval(errorCooldownIntervalRef.current);
+        errorCooldownIntervalRef.current = null;
+      }
+      errorCooldownTimeoutRef.current = null;
+      setCooldownSeconds(0);
+      setScanStatus('idle');
+      scanLockRef.current = false;
+      activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+      lastDetectionTimeRef.current = Date.now();
+    }, cooldownMs);
+  };
+
   const triggerRecognition = async (
     challengeType: string,
     challengeFrames: Blob[] = []
@@ -201,16 +284,12 @@ export function KioskPage() {
     setScanStatus('scanning');
 
     if (pythonEngineActive && videoRef.current) {
-      const frameCount = 3;
+      const frameCount = config?.settings?.capture_frame_count || 5;
       let frames = [...challengeFrames].slice(-frameCount);
       if (frames.length < frameCount && videoRef.current) {
         const missing = frameCount - frames.length;
-        const additional = await captureBurstFrames(videoRef.current, missing, 60);
+        const additional = await captureBurstFrames(videoRef.current, missing, 100);
         frames = [...frames, ...additional];
-      }
-      if (frames.length === 0 && videoRef.current) {
-        const single = await captureFrameBlob(videoRef.current);
-        if (single) frames.push(single);
       }
       if (frames.length > 0) {
         const companyId = config?.location?.company_id || 1;
@@ -218,16 +297,33 @@ export function KioskPage() {
         const proyekId = config?.location?.proyek_id;
         const cabangId = config?.location?.cabang_id;
 
-        const recRes = await recognizeFaceWithPython(
-          frames,
-          companyId,
-          allowedCompanyIds,
-          proyekId,
-          cabangId,
-          challengeType
-        );
+        let recRes: any;
+        try {
+          recRes = await recognizeFaceWithPython(
+            frames,
+            companyId,
+            allowedCompanyIds,
+            proyekId,
+            cabangId,
+            challengeType
+          );
+        } catch {
+          setPythonEngineActive(false);
+          beginErrorCooldown(
+            'Koneksi ke mesin biometrik terputus. Gunakan jalur darurat ID dan PIN.',
+            'error',
+            true
+          );
+          return;
+        }
 
-        if (recRes.decision === 'VERIFIED' && recRes.employee) {
+        if (recRes.status === 'error' || recRes.decision === 'ERROR') {
+          beginErrorCooldown(
+            'Mesin biometrik gagal memproses wajah. Silakan coba lagi.',
+            'error'
+          );
+          return;
+        } else if (recRes.decision === 'VERIFIED' && recRes.employee) {
           executeAttendanceTap(
             recRes.employee,
             recRes.confidence_score || recRes.top1_score || 0.85,
@@ -236,31 +332,25 @@ export function KioskPage() {
           );
           return;
         } else if (recRes.decision === 'AMBIGUOUS' || recRes.status === 'ambiguous') {
-          toast.warning(recRes.message || 'Ada lebih dari satu kandidat wajah. Gunakan jalur darurat ID dan PIN.');
-          setIsFallbackOpen(true);
-          setScanStatus('idle');
-          scanLockRef.current = false;
-          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          beginErrorCooldown(
+            recRes.message || 'Ada lebih dari satu kandidat wajah. Gunakan jalur darurat ID dan PIN.',
+            'warning',
+            true
+          );
           return;
         } else if (recRes.decision === 'RETRY') {
-          toast.warning(recRes.message || 'Wajah belum dapat dipastikan, coba lagi');
-          setScanStatus('idle');
-          scanLockRef.current = false;
-          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          beginErrorCooldown(recRes.message || 'Wajah belum dapat dipastikan, coba lagi');
           return;
         } else if (recRes.decision === 'SPOOF_REJECTED') {
-          toast.error(recRes.message || 'Verifikasi gagal: Keaslian wajah fisik tidak terdeteksi');
-          setScanStatus('idle');
-          scanLockRef.current = false;
-          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          beginErrorCooldown(
+            recRes.message || 'Verifikasi gagal: Keaslian wajah fisik tidak terdeteksi',
+            'error'
+          );
           return;
         } else if (recRes.decision === 'QUALITY_REJECTED') {
-          toast.warning(recRes.message || 'Kualitas frame wajah belum memenuhi standar');
-          setScanStatus('idle');
-          scanLockRef.current = false;
+          beginErrorCooldown(recRes.message || 'Kualitas frame wajah belum memenuhi standar');
           return;
         } else {
-          toast.info(recRes.message || 'Wajah tidak terdaftar dalam sistem');
           setFailedCount((prev) => {
             const next = prev + 1;
             if (next >= (config?.settings?.max_failed_scans || 3)) {
@@ -269,21 +359,21 @@ export function KioskPage() {
             }
             return next;
           });
-          setScanStatus('idle');
-          scanLockRef.current = false;
-          activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+          beginErrorCooldown(recRes.message || 'Wajah tidak terdaftar dalam sistem', 'info');
           return;
         }
       }
+
+      beginErrorCooldown('Kamera belum menangkap frame wajah yang cukup. Posisikan wajah lalu coba lagi.');
+      return;
     }
 
-    toast.error('Mesin biometrik tidak tersedia. Gunakan jalur darurat ID dan PIN.');
-    setIsFallbackOpen(true);
-    setScanStatus('idle');
-    scanLockRef.current = false;
+    beginErrorCooldown(
+      'Mesin biometrik tidak tersedia. Gunakan jalur darurat ID dan PIN.',
+      'error',
+      true
+    );
   };
-
-  const serverOnlyTimerRef = useRef<number>(0);
 
   useEffect(() => {
     const loopInterval = setInterval(async () => {
@@ -313,7 +403,8 @@ export function KioskPage() {
           if (now - lastLivenessCaptureRef.current >= 120 && videoRef.current) {
             const frame = await captureFrameBlob(videoRef.current);
             if (frame) {
-              livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-4);
+              const frameLimit = config?.settings?.capture_frame_count || 5;
+              livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-frameLimit);
               lastLivenessCaptureRef.current = now;
             }
           }
@@ -326,11 +417,12 @@ export function KioskPage() {
           });
 
           serverOnlyTimerRef.current++;
-          if (serverOnlyTimerRef.current >= 15 && livenessFramesRef.current.length >= 2) {
+          const requiredFrames = config?.settings?.capture_frame_count || 5;
+          if (serverOnlyTimerRef.current >= 15 && livenessFramesRef.current.length >= requiredFrames) {
             serverOnlyTimerRef.current = 0;
             const challengeFrames = [...livenessFramesRef.current];
             livenessFramesRef.current = [];
-            await triggerRecognition('CLIENT_VERIFIED', challengeFrames);
+            await triggerRecognition('HEAD_TURN', challengeFrames);
           }
           return;
         }
@@ -371,10 +463,11 @@ export function KioskPage() {
         lastDetectionTimeRef.current = Date.now();
 
         const now = Date.now();
-        if (now - lastLivenessCaptureRef.current >= 80 && videoRef.current) {
+        if (now - lastLivenessCaptureRef.current >= 120 && videoRef.current) {
           const frame = await captureFrameBlob(videoRef.current);
           if (frame) {
-            livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-4);
+            const frameLimit = Math.max(config?.settings?.capture_frame_count || 5, 6);
+            livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-frameLimit);
             lastLivenessCaptureRef.current = now;
           }
         }
@@ -477,10 +570,11 @@ export function KioskPage() {
     };
 
     if (!navigator.onLine) {
-      toast.error('Verifikasi wajah membutuhkan koneksi server. Gunakan jalur darurat ID dan PIN.');
-      setIsFallbackOpen(true);
-      scanLockRef.current = false;
-      setScanStatus('idle');
+      beginErrorCooldown(
+        'Verifikasi wajah membutuhkan koneksi server. Gunakan jalur darurat ID dan PIN.',
+        'error',
+        true
+      );
       return;
     }
 
@@ -492,20 +586,36 @@ export function KioskPage() {
       });
       setFailedCount(0);
     } catch (err: any) {
-      toast.error('Gagal memproses tap absensi');
-      scanLockRef.current = false;
-      setScanStatus('idle');
+      beginErrorCooldown(
+        err.response?.data?.message || 'Gagal memproses tap absensi. Silakan coba lagi.',
+        'error'
+      );
     }
   };
 
   const showSuccessResult = (resultData: any) => {
+    if (errorCooldownTimeoutRef.current !== null) {
+      window.clearTimeout(errorCooldownTimeoutRef.current);
+      errorCooldownTimeoutRef.current = null;
+    }
+    if (errorCooldownIntervalRef.current !== null) {
+      window.clearInterval(errorCooldownIntervalRef.current);
+      errorCooldownIntervalRef.current = null;
+    }
+    toast.dismiss(ERROR_TOAST_ID);
+    setCooldownSeconds(0);
     setLastResult(resultData);
     setScanStatus('success');
 
-    setTimeout(() => {
+    if (successTimeoutRef.current !== null) {
+      window.clearTimeout(successTimeoutRef.current);
+    }
+    successTimeoutRef.current = window.setTimeout(() => {
       setLastResult(null);
       setScanStatus('idle');
       scanLockRef.current = false;
+      successTimeoutRef.current = null;
+      activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
     }, 3500);
   };
 
@@ -574,7 +684,7 @@ export function KioskPage() {
                 )}
                 {challengeUI.text.includes('Buka') && (
                   <div className="absolute top-1/3 flex items-center justify-center text-purple-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
-                    <Sparkles className="h-6 w-6" />
+                    <Smile className="h-6 w-6" />
                   </div>
                 )}
                 {challengeUI.text.includes('Kedip') && !challengeUI.text.includes('Tengok') && (
@@ -639,25 +749,19 @@ export function KioskPage() {
             </div>
 
             {scanStatus === 'success' && lastResult && (
-              <div className="absolute inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-6 animate-in fade-in zoom-in-95 duration-200">
+              <div
+                className="absolute inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-6"
+                role="status"
+                aria-live="polite"
+              >
                 <Card className="w-full max-w-md p-6 bg-card/95 border-emerald-500/40 shadow-2xl text-center space-y-4">
-                  {lastResult.proof_photo_url ? (
-                    <div className="relative mx-auto w-24 h-24 rounded-full overflow-hidden border-2 border-emerald-500 shadow-md">
-                      <img
-                        src={lastResult.proof_photo_url}
-                        alt="Foto Wajah"
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-white text-[9px] font-bold py-0.5">
-                        TERVERIFIKASI
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-500">
-                      <CheckCircle2 className="h-10 w-10 animate-bounce" />
-                    </div>
-                  )}
+                  <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-600 text-white shadow-md">
+                    <Check className="h-11 w-11" strokeWidth={3} aria-hidden="true" />
+                  </div>
                   <div>
+                    <div className="text-lg font-bold text-emerald-700 dark:text-emerald-300">
+                      Absensi Berhasil
+                    </div>
                     <h3 className="text-xl font-bold tracking-tight text-foreground">
                       {lastResult.employee?.nama_karyawan}
                     </h3>
@@ -665,12 +769,32 @@ export function KioskPage() {
                       {lastResult.employee?.id_karyawan}
                     </div>
                   </div>
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-sm">
-                    <Sparkles className="h-4 w-4" />
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold text-sm">
+                    <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                     <span>{lastResult.status_label || lastResult.message || 'Absen Berhasil'}</span>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     Tercatat pukul: <span className="font-mono font-bold">{lastResult.recorded_time}</span>
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {scanStatus === 'cooldown' && (
+              <div
+                className="absolute inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-6"
+                role="status"
+                aria-live="polite"
+              >
+                <Card className="w-full max-w-sm p-6 bg-card/95 border-amber-500/50 shadow-xl text-center space-y-4">
+                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/50">
+                    <AlertCircle className="h-9 w-9" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-foreground">Pemindaian Dijeda</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Kamera akan mencoba lagi dalam {cooldownSeconds} detik.
+                    </p>
                   </div>
                 </Card>
               </div>
@@ -683,7 +807,7 @@ export function KioskPage() {
               variant="outline"
               size="sm"
               onClick={handleManualFallbackClick}
-              className="gap-2 text-xs font-semibold h-9 px-4 rounded-full border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+              className="gap-2 text-xs font-semibold h-11 px-4 rounded-full border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
             >
               <KeyRound className="h-3.5 w-3.5" />
               <span>Jalur Darurat (ID & PIN)</span>

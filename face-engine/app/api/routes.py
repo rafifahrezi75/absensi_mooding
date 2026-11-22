@@ -375,38 +375,45 @@ async def recognize_face(
             message="Format gambar tidak valid"
         )
 
-    if len(frames_bgr) < 1:
+    if len(frames_bgr) < settings.min_consistent_frames:
         return RecognizeResponse(
             status="insufficient_frames",
             decision="RETRY",
             reject_reason="INSUFFICIENT_CONSISTENT_FRAMES",
-            captured_frames=0,
+            captured_frames=len(frames_bgr),
             consistent_frames=0,
-            message="Kamera belum menangkap frame wajah, silakan hadap kamera"
+            message="Jumlah frame wajah belum mencukupi, silakan ulangi gerakan"
         )
 
     liveness_passed = True
     liveness_reason = "disabled"
-    normalized_challenge = (challenge_type or "HEAD_TURN").upper()
+    normalized_challenge = (challenge_type or "BLINK").upper()
     if settings.enable_liveness:
-        if normalized_challenge not in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
-            liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
-            if not liveness_passed:
-                elapsed = round((time.time() - start_time) * 1000, 2)
-                return RecognizeResponse(
-                    status="liveness_failed",
-                    decision="RETRY",
-                    reject_reason="ACTIVE_LIVENESS_FAILED",
-                    liveness_passed=False,
-                    liveness_reason=liveness_reason,
-                    challenge_type=challenge_type,
-                    captured_frames=len(frames_bgr),
-                    processing_ms=elapsed,
-                    message="Gerakan tantangan aktif belum terverifikasi"
-                )
-        else:
-            liveness_passed = True
-            liveness_reason = "client_verified"
+        if normalized_challenge in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
+            return RecognizeResponse(
+                status="liveness_failed",
+                decision="RETRY",
+                reject_reason="SERVER_LIVENESS_REQUIRED",
+                liveness_passed=False,
+                liveness_reason="untrusted_client_liveness_marker",
+                challenge_type=challenge_type,
+                captured_frames=len(frames_bgr),
+                message="Verifikasi gerakan harus dibuktikan oleh server"
+            )
+        liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
+        if not liveness_passed:
+            elapsed = round((time.time() - start_time) * 1000, 2)
+            return RecognizeResponse(
+                status="liveness_failed",
+                decision="RETRY",
+                reject_reason="ACTIVE_LIVENESS_FAILED",
+                liveness_passed=False,
+                liveness_reason=liveness_reason,
+                challenge_type=challenge_type,
+                captured_frames=len(frames_bgr),
+                processing_ms=elapsed,
+                message="Gerakan tantangan aktif belum terverifikasi"
+            )
     valid_frame_embeddings = []
     valid_secondary_embeddings = []
     valid_secondary_qualities = []
@@ -472,6 +479,21 @@ async def recognize_face(
             message="Kualitas wajah belum memenuhi standar"
         )
 
+    if len(valid_frame_embeddings) < settings.min_consistent_frames:
+        elapsed = round((time.time() - start_time) * 1000, 2)
+        return RecognizeResponse(
+            status="insufficient_valid_frames",
+            decision="RETRY",
+            reject_reason="INSUFFICIENT_VALID_FRAMES",
+            liveness_passed=liveness_passed,
+            liveness_reason=liveness_reason,
+            quality_metrics=last_quality_metrics,
+            captured_frames=len(frames_bgr),
+            consistent_frames=len(valid_frame_embeddings),
+            processing_ms=elapsed,
+            message="Frame berkualitas belum cukup, perbaiki posisi dan pencahayaan"
+        )
+
     avg_spoof = float(np.mean(spoof_scores)) if spoof_scores else 0.0
     if settings.enable_passive_anti_spoof and avg_spoof > settings.passive_spoof_threshold:
         elapsed = round((time.time() - start_time) * 1000, 2)
@@ -507,6 +529,21 @@ async def recognize_face(
         min_similarity=0.55
     )
 
+    if len(inlier_vectors) < settings.min_consistent_frames:
+        elapsed = round((time.time() - start_time) * 1000, 2)
+        return RecognizeResponse(
+            status="inconsistent_frames",
+            decision="RETRY",
+            reject_reason="INSUFFICIENT_CONSISTENT_FRAMES",
+            liveness_passed=liveness_passed,
+            liveness_reason=liveness_reason,
+            probe_stability=round(stability, 4),
+            captured_frames=len(frames_bgr),
+            consistent_frames=len(inlier_vectors),
+            processing_ms=elapsed,
+            message="Wajah belum konsisten pada cukup frame, silakan ulangi pemindaian"
+        )
+
     fused_probe = weighted_fusion(inlier_vectors, inlier_qualities)
     avg_probe_qual = float(np.mean(inlier_qualities))
     secondary_probe = None
@@ -516,7 +553,7 @@ async def recognize_face(
             valid_secondary_qualities,
             min_similarity=0.30,
         )
-        if secondary_inliers:
+        if len(secondary_inliers) >= settings.min_consistent_frames:
             secondary_probe = weighted_fusion(
                 secondary_inliers,
                 secondary_inlier_qualities,

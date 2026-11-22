@@ -160,8 +160,25 @@ export class ActiveChallengeDetector {
   }
 
   public pickRandomChallenge(allowed: ChallengeType[] = ['HEAD_TURN']): ChallengeType {
-    this.setChallenge('HEAD_TURN');
-    return 'HEAD_TURN';
+    const supportedChallenges: ChallengeType[] = [
+      'HEAD_TURN',
+      'TURN_LEFT',
+      'TURN_RIGHT',
+      'BLINK',
+      'OPEN_MOUTH',
+    ];
+    const availableChallenges = allowed.filter((challenge) =>
+      supportedChallenges.includes(challenge)
+    );
+    const challengePool = availableChallenges.length > 0
+      ? availableChallenges
+      : ['HEAD_TURN'] satisfies ChallengeType[];
+    const randomValue = globalThis.crypto.getRandomValues(new Uint32Array(1))[0];
+    const selectedChallenge = challengePool[randomValue % challengePool.length];
+
+    this.setChallenge(selectedChallenge);
+
+    return selectedChallenge;
   }
 
   public reset() {

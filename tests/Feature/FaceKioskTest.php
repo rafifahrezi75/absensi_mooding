@@ -30,7 +30,16 @@ class FaceKioskTest extends TestCase
                     'ambiguity_margin',
                     'max_failed_scans',
                     'auto_lock_seconds',
+                    'capture_frame_count',
+                    'min_consistent_frames',
                 ],
+            ])
+            ->assertJsonPath('settings.capture_frame_count', 5)
+            ->assertJsonPath('settings.min_consistent_frames', 4)
+            ->assertJsonPath('settings.allowed_challenges', [
+                'HEAD_TURN',
+                'BLINK',
+                'OPEN_MOUTH',
             ]);
     }
 
