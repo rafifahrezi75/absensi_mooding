@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\EnsureHrdAuthenticated;
 use App\Http\Middleware\VerifyHmacSignature;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -17,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->trustProxies(at: '*');
         $middleware->alias([
             'hmac' => VerifyHmacSignature::class,
+            'hrd.auth' => EnsureHrdAuthenticated::class,
         ]);
         $middleware->validateCsrfTokens(except: [
             'api/*',

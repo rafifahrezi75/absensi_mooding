@@ -40,22 +40,23 @@ export function HrdLayout({ children }: HrdLayoutProps) {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    const rawUser = localStorage.getItem('hrd_session_user');
-    if (rawUser) {
-      try {
-        setCurrentUser(JSON.parse(rawUser));
-      } catch (e) {}
-    } else {
-      axios
-        .get('/api/hrd/me')
-        .then((res) => {
-          setCurrentUser(res.data.user);
-          localStorage.setItem('hrd_session_user', JSON.stringify(res.data.user));
-        })
-        .catch(() => {
-          navigate('/hrd/login');
-        });
+    const token = localStorage.getItem('hrd_token');
+    if (token) {
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     }
+
+    axios
+      .get('/api/hrd/me')
+      .then((res) => {
+        setCurrentUser(res.data.user);
+        localStorage.setItem('hrd_session_user', JSON.stringify(res.data.user));
+      })
+      .catch(() => {
+        localStorage.removeItem('hrd_session_user');
+        localStorage.removeItem('hrd_token');
+        delete axios.defaults.headers.common['Authorization'];
+        navigate('/hrd/login');
+      });
   }, [navigate]);
 
   useEffect(() => {
@@ -91,6 +92,8 @@ export function HrdLayout({ children }: HrdLayoutProps) {
       await axios.post('/api/hrd/logout');
     } catch (e) {}
     localStorage.removeItem('hrd_session_user');
+    localStorage.removeItem('hrd_token');
+    delete axios.defaults.headers.common['Authorization'];
     toast.success('Keluar dari panel HRD');
     navigate('/kiosk');
   };

@@ -282,6 +282,16 @@ class KioskController extends Controller
                 ], 422);
             }
 
+            if (Cache::has("used_attestation_token:{$token}")) {
+                return response()->json([
+                    'status' => 'invalid_attestation',
+                    'decision' => 'RETRY',
+                    'reject_reason' => 'ATTESTATION_TOKEN_REPLAYED',
+                    'message' => 'Token otentikasi biometrik sudah pernah digunakan',
+                ], 422);
+            }
+            Cache::put("used_attestation_token:{$token}", true, 120);
+
             FaceVerificationAttempt::create([
                 'session_id' => $validated['session_id'] ?? Str::uuid()->toString(),
                 'employee_id' => $validated['employee_id'],

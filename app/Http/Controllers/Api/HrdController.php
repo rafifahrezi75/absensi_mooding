@@ -16,6 +16,7 @@ use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -48,6 +49,7 @@ class HrdController extends Controller
 
         $token = bin2hex(random_bytes(32));
         session(['hrd_user_id' => $user->id, 'hrd_token' => $token]);
+        Cache::put("hrd_token:{$token}", $user->id, now()->addHours(8));
 
         return response()->json([
             'success' => true,
@@ -64,6 +66,10 @@ class HrdController extends Controller
 
     public function logout(Request $request): JsonResponse
     {
+        $token = session('hrd_token') ?: $request->bearerToken() ?: $request->header('X-HRD-Token');
+        if ($token) {
+            Cache::forget("hrd_token:{$token}");
+        }
         session()->forget(['hrd_user_id', 'hrd_token']);
 
         return response()->json([
@@ -75,9 +81,15 @@ class HrdController extends Controller
     public function me(Request $request): JsonResponse
     {
         $userId = session('hrd_user_id');
-        $user = $userId ? HrdUser::find($userId) : HrdUser::first();
+        if (! $userId) {
+            $token = $request->bearerToken() ?: $request->header('X-HRD-Token');
+            if ($token) {
+                $userId = Cache::get("hrd_token:{$token}");
+            }
+        }
+        $user = $userId ? HrdUser::find($userId) : null;
 
-        if (! $user) {
+        if (! $user || ! $user->is_active) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 

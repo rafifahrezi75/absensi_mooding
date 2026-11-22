@@ -18,35 +18,35 @@ class VerifyHmacSignature
         $providedTimestamp = (int) $request->header('X-Timestamp');
         $providedSignature = $request->header('X-Signature');
 
-        if (!$providedKey || !$providedTimestamp || !$providedSignature) {
+        if (! $providedKey || ! $providedTimestamp || ! $providedSignature) {
             return response()->json([
-                'error' => 'Missing required HMAC security headers'
+                'error' => 'Missing required HMAC security headers',
             ], Response::HTTP_UNAUTHORIZED);
         }
 
         if ($providedKey !== $expectedKey) {
             return response()->json([
-                'error' => 'Invalid integration key'
+                'error' => 'Invalid integration key',
             ], Response::HTTP_UNAUTHORIZED);
         }
 
         $currentTime = time();
         if (abs($currentTime - $providedTimestamp) > 300) {
             return response()->json([
-                'error' => 'Timestamp drift exceeded 300 seconds window'
+                'error' => 'Timestamp drift exceeded 300 seconds window',
             ], Response::HTTP_UNAUTHORIZED);
         }
 
         $method = strtoupper($request->method());
-        $path = '/' . ltrim($request->path(), '/');
-        $rawBody = $request->getContent();
+        $path = '/'.ltrim($request->path(), '/');
+        $rawBody = in_array($method, ['GET', 'HEAD', 'OPTIONS'], true) ? '' : $request->getContent();
 
-        $payloadToSign = $method . "\n" . $path . "\n" . $providedTimestamp . "\n" . $rawBody;
+        $payloadToSign = $method."\n".$path."\n".$providedTimestamp."\n".$rawBody;
         $calculatedSignature = hash_hmac('sha256', $payloadToSign, $sharedSecret);
 
-        if (!hash_equals($calculatedSignature, $providedSignature)) {
+        if (! hash_equals($calculatedSignature, $providedSignature)) {
             return response()->json([
-                'error' => 'Invalid HMAC signature'
+                'error' => 'Invalid HMAC signature',
             ], Response::HTTP_FORBIDDEN);
         }
 

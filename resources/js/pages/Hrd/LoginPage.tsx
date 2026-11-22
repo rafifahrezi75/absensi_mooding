@@ -27,6 +27,10 @@ export function LoginPage() {
       });
 
       if (res.data.success) {
+        if (res.data.token) {
+          localStorage.setItem('hrd_token', res.data.token);
+          axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
+        }
         localStorage.setItem('hrd_session_user', JSON.stringify(res.data.user));
         toast.success('Login berhasil');
         navigate('/hrd/dashboard');
