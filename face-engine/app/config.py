@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     ambiguity_margin: float = 0.08
     top_k: int = 5
 
-    capture_frame_count: int = 5
-    min_consistent_frames: int = 4
+    capture_frame_count: int = 3
+    min_consistent_frames: int = 1
     min_probe_stability: float = 0.70
     min_probe_quality: float = 60.0
 

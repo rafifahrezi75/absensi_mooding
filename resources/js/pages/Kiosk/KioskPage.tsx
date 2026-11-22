@@ -72,6 +72,7 @@ export function KioskPage() {
   const activeDetectorRef = useRef<ActiveChallengeDetector>(new ActiveChallengeDetector('HEAD_TURN'));
   const livenessFramesRef = useRef<Blob[]>([]);
   const lastLivenessCaptureRef = useRef<number>(0);
+  const lastDetectionTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     loadConfig();
@@ -187,13 +188,17 @@ export function KioskPage() {
     setScanStatus('scanning');
 
     if (pythonEngineActive && videoRef.current) {
-      const frameCount = config?.settings?.capture_frame_count || 5;
-      const bufferedFrames = challengeFrames.slice(-frameCount);
-      const missingFrameCount = Math.max(0, frameCount - bufferedFrames.length);
-      const additionalFrames = missingFrameCount > 0
-        ? await captureBurstFrames(videoRef.current, missingFrameCount, 100)
-        : [];
-      const frames = [...bufferedFrames, ...additionalFrames].slice(-frameCount);
+      const frameCount = 3;
+      let frames = [...challengeFrames].slice(-frameCount);
+      if (frames.length < frameCount && videoRef.current) {
+        const missing = frameCount - frames.length;
+        const additional = await captureBurstFrames(videoRef.current, missing, 60);
+        frames = [...frames, ...additional];
+      }
+      if (frames.length === 0 && videoRef.current) {
+        const single = await captureFrameBlob(videoRef.current);
+        if (single) frames.push(single);
+      }
       if (frames.length > 0) {
         const companyId = config?.location?.company_id || 1;
         const allowedCompanyIds = [companyId];
@@ -304,23 +309,27 @@ export function KioskPage() {
         }
 
         if (!detection) {
-          activeDetectorRef.current.reset();
-          livenessFramesRef.current = [];
-          setChallengeUI({
-            text: 'Tengok Kiri / Kanan',
-            subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
-            badgeClass: 'bg-muted/80 text-muted-foreground border-border',
-            borderClass: 'border-white/30 scale-100',
-          });
+          const now = Date.now();
+          if (now - lastDetectionTimeRef.current > 1200) {
+            activeDetectorRef.current.reset();
+            livenessFramesRef.current = [];
+            setChallengeUI({
+              text: 'Tengok Kiri / Kanan',
+              subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
+              badgeClass: 'bg-muted/80 text-muted-foreground border-border',
+              borderClass: 'border-white/30 scale-100',
+            });
+          }
           return;
         }
 
+        lastDetectionTimeRef.current = Date.now();
+
         const now = Date.now();
-        if (now - lastLivenessCaptureRef.current >= 120 && videoRef.current) {
+        if (now - lastLivenessCaptureRef.current >= 80 && videoRef.current) {
           const frame = await captureFrameBlob(videoRef.current);
           if (frame) {
-            const frameLimit = Math.max(config?.settings?.capture_frame_count || 5, 6);
-            livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-frameLimit);
+            livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-4);
             lastLivenessCaptureRef.current = now;
           }
         }

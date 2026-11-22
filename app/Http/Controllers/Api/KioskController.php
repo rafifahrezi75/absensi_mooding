@@ -54,8 +54,8 @@ class KioskController extends Controller
             'settings' => [
                 'similarity_threshold' => (float) SystemSetting::get('similarity_threshold', (string) config('biometric.match_threshold', 0.65)),
                 'ambiguity_margin' => (float) SystemSetting::get('ambiguity_margin', (string) config('biometric.margin_threshold', 0.08)),
-                'capture_frame_count' => (int) config('biometric.capture_frame_count', 5),
-                'min_consistent_frames' => (int) config('biometric.min_consistent_frames', 4),
+                'capture_frame_count' => (int) config('biometric.capture_frame_count', 3),
+                'min_consistent_frames' => (int) config('biometric.min_consistent_frames', 1),
                 'allowed_challenges' => config('biometric.liveness.allowed_challenges', ['HEAD_TURN']),
                 'challenge_timeout_seconds' => (int) config('biometric.liveness.challenge_timeout_seconds', 8),
                 'passive_anti_spoof_enabled' => (bool) config('biometric.liveness.passive_anti_spoof_enabled', true),

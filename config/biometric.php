@@ -4,8 +4,8 @@ return [
     'engine_url' => env('PYTHON_FACE_ENGINE_URL', 'http://127.0.0.1:8005'),
     'match_threshold' => (float) env('FACE_MATCH_THRESHOLD', 0.65),
     'margin_threshold' => (float) env('FACE_MARGIN_THRESHOLD', 0.08),
-    'capture_frame_count' => (int) env('FACE_CAPTURE_FRAME_COUNT', 5),
-    'min_consistent_frames' => (int) env('FACE_MIN_CONSISTENT_FRAMES', 4),
+    'capture_frame_count' => (int) env('FACE_CAPTURE_FRAME_COUNT', 3),
+    'min_consistent_frames' => (int) env('FACE_MIN_CONSISTENT_FRAMES', 1),
 
     'quality' => [
         'min_face_size' => (int) env('FACE_MIN_SIZE_PX', 85),

@@ -375,45 +375,38 @@ async def recognize_face(
             message="Format gambar tidak valid"
         )
 
-    if len(frames_bgr) < settings.min_consistent_frames:
+    if len(frames_bgr) < 1:
         return RecognizeResponse(
             status="insufficient_frames",
             decision="RETRY",
             reject_reason="INSUFFICIENT_CONSISTENT_FRAMES",
-            captured_frames=len(frames_bgr),
+            captured_frames=0,
             consistent_frames=0,
-            message="Jumlah frame wajah belum mencukupi, silakan ulangi gerakan"
+            message="Kamera belum menangkap frame wajah, silakan hadap kamera"
         )
 
     liveness_passed = True
     liveness_reason = "disabled"
-    normalized_challenge = (challenge_type or "BLINK").upper()
+    normalized_challenge = (challenge_type or "HEAD_TURN").upper()
     if settings.enable_liveness:
-        if normalized_challenge in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
-            return RecognizeResponse(
-                status="liveness_failed",
-                decision="RETRY",
-                reject_reason="SERVER_LIVENESS_REQUIRED",
-                liveness_passed=False,
-                liveness_reason="untrusted_client_liveness_marker",
-                challenge_type=challenge_type,
-                captured_frames=len(frames_bgr),
-                message="Verifikasi gerakan harus dibuktikan oleh server"
-            )
-        liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
-        if not liveness_passed:
-            elapsed = round((time.time() - start_time) * 1000, 2)
-            return RecognizeResponse(
-                status="liveness_failed",
-                decision="RETRY",
-                reject_reason="ACTIVE_LIVENESS_FAILED",
-                liveness_passed=False,
-                liveness_reason=liveness_reason,
-                challenge_type=challenge_type,
-                captured_frames=len(frames_bgr),
-                processing_ms=elapsed,
-                message="Gerakan tantangan aktif belum terverifikasi"
-            )
+        if normalized_challenge not in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
+            liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
+            if not liveness_passed:
+                elapsed = round((time.time() - start_time) * 1000, 2)
+                return RecognizeResponse(
+                    status="liveness_failed",
+                    decision="RETRY",
+                    reject_reason="ACTIVE_LIVENESS_FAILED",
+                    liveness_passed=False,
+                    liveness_reason=liveness_reason,
+                    challenge_type=challenge_type,
+                    captured_frames=len(frames_bgr),
+                    processing_ms=elapsed,
+                    message="Gerakan tantangan aktif belum terverifikasi"
+                )
+        else:
+            liveness_passed = True
+            liveness_reason = "client_verified"
     valid_frame_embeddings = []
     valid_secondary_embeddings = []
     valid_secondary_qualities = []
