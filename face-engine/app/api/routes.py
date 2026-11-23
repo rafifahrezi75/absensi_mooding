@@ -430,7 +430,9 @@ async def recognize_face(
     valid_frame_qualities = []
     spoof_scores = []
     last_quality_metrics = None
+    best_recognition_quality_metrics = None
     quality_errors = []
+    quality_approved_frame_count = 0
 
     for frame in frames_bgr:
         face_status, face = recognizer.extract_face(frame)
@@ -458,6 +460,7 @@ async def recognize_face(
             quality_errors.append(q_code)
             continue
 
+        quality_approved_frame_count += 1
         bbox = [max(0, int(v)) for v in face.bbox]
         h, w = frame.shape[:2]
         x1, y1, x2, y2 = bbox[0], bbox[1], min(w, bbox[2]), min(h, bbox[3])
@@ -466,16 +469,41 @@ async def recognize_face(
             sp_score = calculate_passive_spoof_score(face_crop)
             spoof_scores.append(sp_score)
 
+        frame_quality = float(q_metrics["quality_score"])
+        frame_yaw = abs(float(q_metrics.get("yaw", 0.0)))
+        if frame_yaw > settings.max_recognition_yaw:
+            continue
+
         emb = recognizer.get_embedding(face)
         valid_frame_embeddings.append(emb)
-        valid_frame_qualities.append(float(q_metrics["quality_score"]))
+        valid_frame_qualities.append(frame_quality)
+        if (
+            best_recognition_quality_metrics is None
+            or frame_quality > float(best_recognition_quality_metrics["quality_score"])
+        ):
+            best_recognition_quality_metrics = q_metrics
+
         secondary_embedding = recognizer.get_sface_embedding(frame, face)
         if secondary_embedding is not None:
             valid_secondary_embeddings.append(secondary_embedding)
-            valid_secondary_qualities.append(float(q_metrics["quality_score"]))
+            valid_secondary_qualities.append(frame_quality)
 
     if not valid_frame_embeddings:
         elapsed = round((time.time() - start_time) * 1000, 2)
+        if quality_approved_frame_count > 0:
+            return RecognizeResponse(
+                status="insufficient_frontal_frames",
+                decision="RETRY",
+                reject_reason="INSUFFICIENT_FRONTAL_FRAMES",
+                liveness_passed=liveness_passed,
+                liveness_reason=liveness_reason,
+                quality_metrics=last_quality_metrics,
+                captured_frames=len(frames_bgr),
+                consistent_frames=0,
+                processing_ms=elapsed,
+                message="Hadapkan wajah lurus ke kamera dan tahan sebentar"
+            )
+
         primary_reason = quality_errors[0] if quality_errors else "FACE_QUALITY_FAILED"
         return RecognizeResponse(
             status="poor_quality",
@@ -489,19 +517,19 @@ async def recognize_face(
             message="Kualitas wajah belum memenuhi standar"
         )
 
-    if len(valid_frame_embeddings) < settings.min_consistent_frames:
+    if len(valid_frame_embeddings) < settings.min_recognition_frames:
         elapsed = round((time.time() - start_time) * 1000, 2)
         return RecognizeResponse(
-            status="insufficient_valid_frames",
+            status="insufficient_frontal_frames",
             decision="RETRY",
-            reject_reason="INSUFFICIENT_VALID_FRAMES",
+            reject_reason="INSUFFICIENT_FRONTAL_FRAMES",
             liveness_passed=liveness_passed,
             liveness_reason=liveness_reason,
-            quality_metrics=last_quality_metrics,
+            quality_metrics=best_recognition_quality_metrics or last_quality_metrics,
             captured_frames=len(frames_bgr),
             consistent_frames=len(valid_frame_embeddings),
             processing_ms=elapsed,
-            message="Frame berkualitas belum cukup, perbaiki posisi dan pencahayaan"
+            message="Hadapkan wajah lurus ke kamera dan tahan sebentar"
         )
 
     avg_spoof = float(np.mean(spoof_scores)) if spoof_scores else 0.0
@@ -539,7 +567,7 @@ async def recognize_face(
         min_similarity=0.55
     )
 
-    if len(inlier_vectors) < settings.min_consistent_frames:
+    if len(inlier_vectors) < settings.min_recognition_frames:
         elapsed = round((time.time() - start_time) * 1000, 2)
         return RecognizeResponse(
             status="inconsistent_frames",
@@ -563,7 +591,7 @@ async def recognize_face(
             valid_secondary_qualities,
             min_similarity=0.30,
         )
-        if len(secondary_inliers) >= settings.min_consistent_frames:
+        if len(secondary_inliers) >= settings.min_recognition_frames:
             secondary_probe = weighted_fusion(
                 secondary_inliers,
                 secondary_inlier_qualities,
@@ -619,7 +647,7 @@ async def recognize_face(
         captured_frames=len(frames_bgr),
         consistent_frames=len(inlier_vectors),
         processing_ms=elapsed,
-        quality_metrics=last_quality_metrics,
+        quality_metrics=best_recognition_quality_metrics or last_quality_metrics,
         employee=final_match.get("employee"),
         candidates=final_match.get("candidates"),
         requires_secondary_verification=final_match.get("requires_secondary_verification", False),

@@ -23,6 +23,8 @@ import {
   assessLightingQuality,
   checkPythonEngineHealth,
   captureFrameBlob,
+  detectFaceBoxFast,
+  loadFaceDetectionModel,
   recognizeFaceWithPython,
 } from '@/lib/biometricEngine';
 import { cacheEmployees, getCachedEmployees } from '@/lib/offlineQueue';
@@ -41,6 +43,7 @@ export function KioskPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [config, setConfig] = useState<any>(null);
   const [cachedEmployees, setCachedEmployees] = useState<any[]>([]);
@@ -71,6 +74,7 @@ export function KioskPage() {
 
   const scanLockRef = useRef<boolean>(false);
   const isDetectingRef = useRef<boolean>(false);
+  const isDrawingFaceBoxRef = useRef<boolean>(false);
   const livenessFramesRef = useRef<Blob[]>([]);
   const errorCooldownTimeoutRef = useRef<number | null>(null);
   const errorCooldownIntervalRef = useRef<number | null>(null);
@@ -81,6 +85,7 @@ export function KioskPage() {
     loadConfig();
     loadEmployees();
     startCamera();
+    loadFaceDetectionModel().catch(() => {});
     const engineHealthInterval = window.setInterval(async () => {
       const engineStatus = await checkPythonEngineHealth();
       setPythonEngineActive(engineStatus.available);
@@ -108,6 +113,43 @@ export function KioskPage() {
       autoSelectButton(res.data.buttons);
     } catch (err) {}
   };
+
+  useEffect(() => {
+    const faceBoxInterval = window.setInterval(async () => {
+      if (
+        !cameraActive ||
+        !videoRef.current ||
+        !overlayCanvasRef.current ||
+        isDrawingFaceBoxRef.current
+      ) {
+        return;
+      }
+
+      isDrawingFaceBoxRef.current = true;
+      try {
+        const video = videoRef.current;
+        const overlay = overlayCanvasRef.current;
+        overlay.width = video.videoWidth || 640;
+        overlay.height = video.videoHeight || 480;
+
+        const context = overlay.getContext('2d');
+        if (!context) return;
+
+        context.clearRect(0, 0, overlay.width, overlay.height);
+        const faceBox = await detectFaceBoxFast(video);
+        if (faceBox) {
+          context.strokeStyle = '#34d399';
+          context.lineWidth = 3;
+          context.strokeRect(faceBox.x, faceBox.y, faceBox.width, faceBox.height);
+        }
+      } catch {
+      } finally {
+        isDrawingFaceBoxRef.current = false;
+      }
+    }, 300);
+
+    return () => window.clearInterval(faceBoxInterval);
+  }, [cameraActive]);
 
   const autoSelectButton = (buttons: any[]) => {
     if (!buttons || buttons.length === 0) return;
@@ -272,9 +314,9 @@ export function KioskPage() {
     setScanStatus('scanning');
 
     if (pythonEngineActive && videoRef.current) {
-      const frameCount = config?.settings?.capture_frame_count || 5;
-      let frames = [...challengeFrames].slice(-frameCount);
-      if (frames.length >= frameCount) {
+      const identityFrameCount = config?.settings?.capture_frame_count || 5;
+      const frames = [...challengeFrames];
+      if (frames.length >= identityFrameCount) {
         const companyId = config?.location?.company_id || 1;
         const allowedCompanyIds = [companyId];
         const proyekId = config?.location?.proyek_id;
@@ -383,16 +425,16 @@ export function KioskPage() {
       try {
         serverOnlyTimerRef.current++;
         const sequenceStep = serverOnlyTimerRef.current;
-        const shouldCapture = [4, 8, 18, 30, 36].includes(sequenceStep);
+        const shouldCapture = [3, 6, 9, 12, 15, 24, 33].includes(sequenceStep);
 
-        if (sequenceStep < 12) {
+        if (sequenceStep < 18) {
           setChallengeUI({
             text: 'Hadap Lurus',
             subtext: 'Tahan posisi sebentar',
             badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40 animate-pulse',
             borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
           });
-        } else if (sequenceStep < 24) {
+        } else if (sequenceStep < 29) {
           setChallengeUI({
             text: 'Tengok Kanan',
             subtext: 'Arahkan kepala sedikit ke kanan',
@@ -415,8 +457,9 @@ export function KioskPage() {
           }
         }
 
-        const requiredFrames = config?.settings?.capture_frame_count || 5;
-        if (sequenceStep >= 40 && livenessFramesRef.current.length >= requiredFrames) {
+        const identityFrameCount = config?.settings?.capture_frame_count || 5;
+        const requiredFrames = identityFrameCount + 2;
+        if (sequenceStep >= 36 && livenessFramesRef.current.length >= requiredFrames) {
           serverOnlyTimerRef.current = 0;
           const challengeFrames = [...livenessFramesRef.current].slice(0, requiredFrames);
           livenessFramesRef.current = [];
@@ -424,7 +467,7 @@ export function KioskPage() {
           return;
         }
 
-        if (sequenceStep >= 45) {
+        if (sequenceStep >= 42) {
           serverOnlyTimerRef.current = 0;
           livenessFramesRef.current = [];
           beginErrorCooldown('Kamera belum menangkap frame yang cukup. Silakan posisikan wajah lalu coba lagi.');
@@ -607,6 +650,10 @@ export function KioskPage() {
               className="w-full h-full object-cover transform -scale-x-100"
             />
             <canvas ref={canvasRef} className="hidden" />
+            <canvas
+              ref={overlayCanvasRef}
+              className="absolute inset-0 w-full h-full pointer-events-none transform -scale-x-100"
+            />
 
             <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
               <div

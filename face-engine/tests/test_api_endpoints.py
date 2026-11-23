@@ -183,8 +183,11 @@ def test_recognition_requires_minimum_quality_approved_frames(monkeypatch):
     def check_quality(frame, face):
         nonlocal quality_checks
         quality_checks += 1
-        is_valid = quality_checks <= settings.min_consistent_frames - 1
-        return is_valid, "FACE_QUALITY_FAILED", "quality", {"quality_score": 95.0}
+        is_valid = quality_checks <= settings.min_recognition_frames - 1
+        return is_valid, "FACE_QUALITY_FAILED", "quality", {
+            "quality_score": 95.0,
+            "yaw": 0.0,
+        }
 
     monkeypatch.setattr(routes_module, "check_frame_quality", check_quality)
 
@@ -201,8 +204,8 @@ def test_recognition_requires_minimum_quality_approved_frames(monkeypatch):
     ).model_dump()
 
     assert response["decision"] == "RETRY"
-    assert response["reject_reason"] == "INSUFFICIENT_VALID_FRAMES"
-    assert response["consistent_frames"] == settings.min_consistent_frames - 1
+    assert response["reject_reason"] == "INSUFFICIENT_FRONTAL_FRAMES"
+    assert response["consistent_frames"] == settings.min_recognition_frames - 1
 
 
 def test_recognition_requires_minimum_embedding_inliers(monkeypatch):
@@ -210,11 +213,16 @@ def test_recognition_requires_minimum_embedding_inliers(monkeypatch):
     monkeypatch.setattr(
         routes_module,
         "check_frame_quality",
-        lambda frame, face: (True, "OK", "quality", {"quality_score": 95.0}),
+        lambda frame, face: (
+            True,
+            "OK",
+            "quality",
+            {"quality_score": 95.0, "yaw": 0.0},
+        ),
     )
 
     def keep_too_few_inliers(vectors, qualities, min_similarity):
-        required_count = settings.min_consistent_frames - 1
+        required_count = settings.min_recognition_frames - 1
         return vectors[:required_count], qualities[:required_count]
 
     monkeypatch.setattr(routes_module, "remove_embedding_outliers", keep_too_few_inliers)
@@ -233,4 +241,56 @@ def test_recognition_requires_minimum_embedding_inliers(monkeypatch):
 
     assert response["decision"] == "RETRY"
     assert response["reject_reason"] == "INSUFFICIENT_CONSISTENT_FRAMES"
-    assert response["consistent_frames"] == settings.min_consistent_frames - 1
+    assert response["consistent_frames"] == settings.min_recognition_frames - 1
+
+
+def test_recognition_uses_frontal_frames_for_identity_matching(monkeypatch):
+    configure_successful_recognition_pipeline(monkeypatch)
+    frame_yaws = iter([0.0, 2.0, -1.0, 3.0, 0.0, 20.0, -20.0])
+    front_embedding = l2_normalize(np.ones(512, dtype=np.float32))
+    captured_query = None
+
+    def check_quality(frame, face):
+        return True, "OK", "quality", {
+            "quality_score": 95.0,
+            "yaw": next(frame_yaws),
+        }
+
+    def get_embedding(face):
+        return front_embedding
+
+    def match(**kwargs):
+        nonlocal captured_query
+        captured_query = kwargs["query_vector"]
+        return {
+            "status": "verified",
+            "decision": "VERIFIED",
+            "employee": {
+                "employee_id": 1,
+                "external_karyawan_id": 1,
+                "company_id": 1,
+                "id_karyawan": "EMP001",
+                "nama_karyawan": "Employee One",
+            },
+        }
+
+    monkeypatch.setattr(routes_module, "check_frame_quality", check_quality)
+    monkeypatch.setattr(recognizer, "get_embedding", get_embedding)
+    monkeypatch.setattr(routes_module.matcher, "match", match)
+
+    response = resolve_immediate_coroutine(
+        recognize_face(
+            frames=make_uploaded_frames(settings.capture_frame_count + 2),
+            company_id=1,
+            allowed_company_ids=None,
+            proyek_id=None,
+            cabang_id=None,
+            challenge_type="HEAD_TURN",
+            x_biometric_secret=settings.biometric_shared_secret,
+        )
+    ).model_dump()
+
+    assert response["decision"] == "VERIFIED"
+    assert response["consistent_frames"] == settings.capture_frame_count
+    assert captured_query is not None
+    assert float(np.dot(captured_query, front_embedding)) > 0.999

@@ -2,6 +2,48 @@ import * as faceapi from '@vladmandic/face-api';
 
 let modelsLoaded = false;
 let modelLoadingPromise: Promise<void> | null = null;
+let faceDetectorLoaded = false;
+let faceDetectorLoadingPromise: Promise<void> | null = null;
+
+export async function loadFaceDetectionModel(): Promise<void> {
+  if (faceDetectorLoaded) return;
+  if (faceDetectorLoadingPromise) return faceDetectorLoadingPromise;
+
+  faceDetectorLoadingPromise = faceapi.nets.tinyFaceDetector
+    .loadFromUri('/models')
+    .then(() => {
+      faceDetectorLoaded = true;
+    })
+    .catch(() => {
+      console.warn('Visual face detector failed to load, continuing with server recognition');
+    });
+
+  return faceDetectorLoadingPromise;
+}
+
+export async function detectFaceBoxFast(
+  video: HTMLVideoElement
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  if (!faceDetectorLoaded || !video || video.readyState < 2) {
+    return null;
+  }
+
+  const detection = await faceapi.detectSingleFace(
+    video,
+    new faceapi.TinyFaceDetectorOptions({
+      inputSize: 224,
+      scoreThreshold: 0.35,
+    })
+  );
+
+  if (!detection) {
+    return null;
+  }
+
+  const { x, y, width, height } = detection.box;
+
+  return { x, y, width, height };
+}
 
 export async function loadBiometricModels(): Promise<void> {
   if (modelsLoaded) return;
