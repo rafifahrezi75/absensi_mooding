@@ -927,7 +927,7 @@ export function EmployeeDetailPage() {
       </Dialog>
 
       <Dialog open={enrollModalOpen} onOpenChange={closeEnrollModal}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ScanFace className="h-5 w-5 text-primary" />
@@ -1076,7 +1076,7 @@ export function EmployeeDetailPage() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Camera className="h-5 w-5 text-primary" />
