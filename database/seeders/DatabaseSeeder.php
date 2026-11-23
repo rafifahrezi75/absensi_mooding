@@ -234,6 +234,101 @@ class DatabaseSeeder extends Seeder
             'synced_at' => now(),
         ]);
 
+        Employee::create([
+            'company_id' => 1,
+            'external_karyawan_id' => 106,
+            'id_absensi' => '106',
+            'id_karyawan' => 'EMP006',
+            'nomor_induk' => '3171010190006',
+            'nama_karyawan' => 'Fajar Nugroho',
+            'jabatan' => 'Staf Quality Control',
+            'entitasshelter_id' => 1,
+            'cabang_id' => 1,
+            'proyek_id' => null,
+            'kebutuhan_proyek_id' => null,
+            'shift_id' => $shiftPagi->external_shift_id,
+            'status' => 'aktif',
+            'pin_hash' => Hash::make('6789'),
+            'biometric_consent_at' => now(),
+            'synced_at' => now(),
+        ]);
+
+        Employee::create([
+            'company_id' => 1,
+            'external_karyawan_id' => 107,
+            'id_absensi' => '107',
+            'id_karyawan' => 'EMP007',
+            'nomor_induk' => '3171010190007',
+            'nama_karyawan' => 'Gita Permata Sari',
+            'jabatan' => 'Admin Logistik',
+            'entitasshelter_id' => 1,
+            'cabang_id' => null,
+            'proyek_id' => null,
+            'kebutuhan_proyek_id' => null,
+            'shift_id' => $shiftPagi->external_shift_id,
+            'status' => 'aktif',
+            'pin_hash' => Hash::make('7890'),
+            'biometric_consent_at' => now(),
+            'synced_at' => now(),
+        ]);
+
+        Employee::create([
+            'company_id' => 1,
+            'external_karyawan_id' => 108,
+            'id_absensi' => '108',
+            'id_karyawan' => 'EMP008',
+            'nomor_induk' => '3171010190008',
+            'nama_karyawan' => 'Hendra Setiawan',
+            'jabatan' => 'Operator Mesin',
+            'entitasshelter_id' => 1,
+            'cabang_id' => null,
+            'proyek_id' => 42,
+            'kebutuhan_proyek_id' => null,
+            'shift_id' => $shiftSiang->external_shift_id,
+            'status' => 'aktif',
+            'pin_hash' => Hash::make('8901'),
+            'biometric_consent_at' => now(),
+            'synced_at' => now(),
+        ]);
+
+        Employee::create([
+            'company_id' => 1,
+            'external_karyawan_id' => 109,
+            'id_absensi' => '109',
+            'id_karyawan' => 'EMP009',
+            'nomor_induk' => '3171010190009',
+            'nama_karyawan' => 'Indah Lestari',
+            'jabatan' => 'Staff Keuangan Lapangan',
+            'entitasshelter_id' => 1,
+            'cabang_id' => 1,
+            'proyek_id' => null,
+            'kebutuhan_proyek_id' => null,
+            'shift_id' => $shiftPagi->external_shift_id,
+            'status' => 'aktif',
+            'pin_hash' => Hash::make('9012'),
+            'biometric_consent_at' => now(),
+            'synced_at' => now(),
+        ]);
+
+        Employee::create([
+            'company_id' => 1,
+            'external_karyawan_id' => 110,
+            'id_absensi' => '110',
+            'id_karyawan' => 'EMP010',
+            'nomor_induk' => '3171010190010',
+            'nama_karyawan' => 'Joko Susilo',
+            'jabatan' => 'Petugas Keamanan (Security)',
+            'entitasshelter_id' => 1,
+            'cabang_id' => null,
+            'proyek_id' => null,
+            'kebutuhan_proyek_id' => null,
+            'shift_id' => $shiftMalam->external_shift_id,
+            'status' => 'aktif',
+            'pin_hash' => Hash::make('0123'),
+            'biometric_consent_at' => now(),
+            'synced_at' => now(),
+        ]);
+
         $buttons = [
             [
                 'attendance_type' => 'clock_in',

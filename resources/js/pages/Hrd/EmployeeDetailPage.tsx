@@ -510,8 +510,8 @@ export function EmployeeDetailPage() {
           </div>
         </div>
 
-        <Card className="shadow-xs border overflow-hidden">
-          <div className="p-6 bg-gradient-to-r from-muted/50 via-muted/20 to-background flex flex-col md:flex-row md:items-center justify-between gap-6 border-b">
+        <Card className="shadow-xs border overflow-hidden p-0 py-0 gap-0">
+          <div className="p-6 bg-muted/40 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b">
             <div className="flex items-center gap-5">
               <div
                 className="relative w-20 h-20 rounded-2xl overflow-hidden bg-muted flex items-center justify-center shrink-0 border-2 border-primary/20 shadow-md cursor-pointer group"
