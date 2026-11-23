@@ -5,7 +5,8 @@ from app.config import settings
 
 def check_frame_quality(
     img_bgr: np.ndarray,
-    face: Optional[Any] = None
+    face: Optional[Any] = None,
+    expected_pose: Optional[str] = None,
 ) -> Tuple[bool, str, str, Dict[str, float]]:
     metrics = {
         "brightness": 0.0,
@@ -60,7 +61,20 @@ def check_frame_quality(
             metrics["yaw"] = round(yaw, 2)
             metrics["roll"] = round(roll, 2)
 
-            if abs(yaw) > settings.max_yaw or abs(pitch) > settings.max_pitch or abs(roll) > settings.max_roll:
+            if abs(pitch) > settings.max_pitch or abs(roll) > settings.max_roll:
+                return False, "POSE_INVALID", "Jaga kepala tetap tegak dan tidak miring", metrics
+
+            if expected_pose == "slight_left":
+                if yaw < settings.enrollment_side_min_yaw:
+                    return False, "POSE_INVALID", "Untuk pose kiri, arahkan wajah sedikit ke kiri", metrics
+                if yaw > settings.enrollment_side_max_yaw:
+                    return False, "POSE_INVALID", "Pose terlalu menyamping, kurangi arah wajah ke kiri", metrics
+            elif expected_pose == "slight_right":
+                if yaw > -settings.enrollment_side_min_yaw:
+                    return False, "POSE_INVALID", "Untuk pose kanan, arahkan wajah sedikit ke kanan", metrics
+                if yaw < -settings.enrollment_side_max_yaw:
+                    return False, "POSE_INVALID", "Pose terlalu menyamping, kurangi arah wajah ke kanan", metrics
+            elif abs(yaw) > settings.max_yaw:
                 return False, "POSE_INVALID", "Hadapkan wajah tegak lurus ke kamera", metrics
 
     score = 100.0
@@ -70,7 +84,7 @@ def check_frame_quality(
         score -= (80.0 - metrics["brightness"]) * 0.3
     elif metrics["brightness"] > 180.0:
         score -= (metrics["brightness"] - 180.0) * 0.3
-    if abs(metrics["yaw"]) > 10.0:
+    if expected_pose not in {"slight_left", "slight_right"} and abs(metrics["yaw"]) > 10.0:
         score -= (abs(metrics["yaw"]) - 10.0) * 1.5
 
     metrics["quality_score"] = round(max(10.0, min(100.0, score)), 2)

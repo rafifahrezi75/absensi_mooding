@@ -68,8 +68,6 @@ class FaceKioskTest extends TestCase
             ->assertJsonPath('settings.min_consistent_frames', 4)
             ->assertJsonPath('settings.allowed_challenges', [
                 'HEAD_TURN',
-                'BLINK',
-                'OPEN_MOUTH',
             ]);
     }
 
@@ -79,9 +77,13 @@ class FaceKioskTest extends TestCase
             'pin' => '123456',
         ]);
         $validResponse->assertStatus(200)
-            ->assertJson([
-                'success' => true,
-            ]);
+            ->assertJson(['success' => true])
+            ->assertJsonStructure(['token', 'user']);
+
+        $this->withToken($validResponse->json('token'))
+            ->getJson('/api/hrd/me')
+            ->assertOk()
+            ->assertJsonPath('user.id', $validResponse->json('user.id'));
 
         $invalidResponse = $this->postJson('/api/kiosk/auth-verify', [
             'pin' => '000000',

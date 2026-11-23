@@ -134,7 +134,9 @@ export function KioskLayout({
     try {
       const res = await axios.post('/api/kiosk/auth-verify', { pin: hrdPin });
       if (res.data.success) {
+        localStorage.setItem('hrd_token', res.data.token);
         localStorage.setItem('hrd_session_user', JSON.stringify(res.data.user));
+        axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
         toast.success('Kunci Kiosk terbuka');
         setIsPinModalOpen(false);
         setHrdPin('');

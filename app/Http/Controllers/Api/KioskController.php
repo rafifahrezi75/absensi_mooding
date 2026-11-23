@@ -76,8 +76,17 @@ class KioskController extends Controller
 
         foreach ($hrdUsers as $user) {
             if (Hash::check($validated['pin'], $user->kiosk_pin_hash)) {
+                $request->session()->regenerate();
+                $token = bin2hex(random_bytes(32));
+                $request->session()->put([
+                    'hrd_user_id' => $user->id,
+                    'hrd_token' => $token,
+                ]);
+                Cache::put("hrd_token:{$token}", $user->id, now()->addHours(8));
+
                 return response()->json([
                     'success' => true,
+                    'token' => $token,
                     'user' => [
                         'id' => $user->id,
                         'name' => $user->name,

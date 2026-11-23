@@ -16,22 +16,14 @@ import {
   RefreshCw,
   SunMedium,
   UserCheck,
-  Eye,
-  EyeOff,
-  Smile,
   ScanFace,
   ShieldCheck,
 } from 'lucide-react';
 import {
-  loadBiometricModels,
-  isBiometricModelsLoaded,
-  detectFaceFast,
   assessLightingQuality,
   checkPythonEngineHealth,
-  captureBurstFrames,
   captureFrameBlob,
   recognizeFaceWithPython,
-  ActiveChallengeDetector,
 } from '@/lib/biometricEngine';
 import { cacheEmployees, getCachedEmployees } from '@/lib/offlineQueue';
 import axios from 'axios';
@@ -49,13 +41,11 @@ export function KioskPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [config, setConfig] = useState<any>(null);
   const [cachedEmployees, setCachedEmployees] = useState<any[]>([]);
   const [selectedType, setSelectedType] = useState<string>('clock_in');
   const [cameraActive, setCameraActive] = useState<boolean>(false);
-  const [modelReady, setModelReady] = useState<boolean>(false);
   const [lighting, setLighting] = useState<{ status: string; label: string }>({
     status: 'good',
     label: 'Mendeteksi cahaya...',
@@ -73,18 +63,15 @@ export function KioskPage() {
     badgeClass: string;
     borderClass: string;
   }>({
-    text: 'Tengok Kiri / Kanan',
-    subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
+    text: 'Hadap Lurus',
+    subtext: 'Posisikan wajah di dalam bingkai',
     badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
     borderClass: 'border-white/30 scale-100',
   });
 
   const scanLockRef = useRef<boolean>(false);
   const isDetectingRef = useRef<boolean>(false);
-  const activeDetectorRef = useRef<ActiveChallengeDetector>(new ActiveChallengeDetector('HEAD_TURN'));
   const livenessFramesRef = useRef<Blob[]>([]);
-  const lastLivenessCaptureRef = useRef<number>(0);
-  const lastDetectionTimeRef = useRef<number>(Date.now());
   const errorCooldownTimeoutRef = useRef<number | null>(null);
   const errorCooldownIntervalRef = useRef<number | null>(null);
   const successTimeoutRef = useRef<number | null>(null);
@@ -94,15 +81,14 @@ export function KioskPage() {
     loadConfig();
     loadEmployees();
     startCamera();
-
-    loadBiometricModels()
-      .then(() => {
-        setModelReady(isBiometricModelsLoaded());
-      })
-      .catch(() => {});
+    const engineHealthInterval = window.setInterval(async () => {
+      const engineStatus = await checkPythonEngineHealth();
+      setPythonEngineActive(engineStatus.available);
+    }, 10000);
 
     return () => {
       stopCamera();
+      window.clearInterval(engineHealthInterval);
       if (errorCooldownTimeoutRef.current !== null) {
         window.clearTimeout(errorCooldownTimeoutRef.current);
       }
@@ -120,7 +106,6 @@ export function KioskPage() {
       const res = await axios.get('/api/kiosk/config');
       setConfig(res.data);
       autoSelectButton(res.data.buttons);
-      activeDetectorRef.current.pickRandomChallenge(res.data.settings?.allowed_challenges);
     } catch (err) {}
   };
 
@@ -240,7 +225,6 @@ export function KioskPage() {
     scanLockRef.current = true;
     livenessFramesRef.current = [];
     serverOnlyTimerRef.current = 0;
-    activeDetectorRef.current.reset();
     setScanStatus('cooldown');
     setCooldownSeconds(Math.ceil(cooldownMs / 1000));
 
@@ -270,8 +254,12 @@ export function KioskPage() {
       setCooldownSeconds(0);
       setScanStatus('idle');
       scanLockRef.current = false;
-      activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
-      lastDetectionTimeRef.current = Date.now();
+      setChallengeUI({
+        text: 'Hadap Lurus',
+        subtext: 'Posisikan wajah di dalam bingkai',
+        badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
+        borderClass: 'border-white/30 scale-100',
+      });
     }, cooldownMs);
   };
 
@@ -286,12 +274,7 @@ export function KioskPage() {
     if (pythonEngineActive && videoRef.current) {
       const frameCount = config?.settings?.capture_frame_count || 5;
       let frames = [...challengeFrames].slice(-frameCount);
-      if (frames.length < frameCount && videoRef.current) {
-        const missing = frameCount - frames.length;
-        const additional = await captureBurstFrames(videoRef.current, missing, 100);
-        frames = [...frames, ...additional];
-      }
-      if (frames.length > 0) {
+      if (frames.length >= frameCount) {
         const companyId = config?.location?.company_id || 1;
         const allowedCompanyIds = [companyId];
         const proyekId = config?.location?.proyek_id;
@@ -386,7 +369,7 @@ export function KioskPage() {
         return;
       }
 
-      if (!modelReady && !pythonEngineActive) {
+      if (!pythonEngineActive) {
         return;
       }
 
@@ -398,96 +381,53 @@ export function KioskPage() {
       isDetectingRef.current = true;
 
       try {
-        if (!modelReady && pythonEngineActive) {
-          const now = Date.now();
-          if (now - lastLivenessCaptureRef.current >= 120 && videoRef.current) {
-            const frame = await captureFrameBlob(videoRef.current);
-            if (frame) {
-              const frameLimit = config?.settings?.capture_frame_count || 5;
-              livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-frameLimit);
-              lastLivenessCaptureRef.current = now;
-            }
-          }
+        serverOnlyTimerRef.current++;
+        const sequenceStep = serverOnlyTimerRef.current;
+        const shouldCapture = [4, 8, 18, 30, 36].includes(sequenceStep);
 
+        if (sequenceStep < 12) {
           setChallengeUI({
-            text: 'Tengok Kiri / Kanan',
-            subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
+            text: 'Hadap Lurus',
+            subtext: 'Tahan posisi sebentar',
+            badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40 animate-pulse',
+            borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
+          });
+        } else if (sequenceStep < 24) {
+          setChallengeUI({
+            text: 'Tengok Kanan',
+            subtext: 'Arahkan kepala sedikit ke kanan',
             badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
             borderClass: 'border-indigo-400 scale-100 shadow-[0_0_25px_rgba(99,102,241,0.35)]',
           });
-
-          serverOnlyTimerRef.current++;
-          const requiredFrames = config?.settings?.capture_frame_count || 5;
-          if (serverOnlyTimerRef.current >= 15 && livenessFramesRef.current.length >= requiredFrames) {
-            serverOnlyTimerRef.current = 0;
-            const challengeFrames = [...livenessFramesRef.current];
-            livenessFramesRef.current = [];
-            await triggerRecognition('HEAD_TURN', challengeFrames);
-          }
-          return;
+        } else {
+          setChallengeUI({
+            text: 'Tengok Kiri',
+            subtext: 'Arahkan kepala sedikit ke kiri',
+            badgeClass: 'bg-violet-500/20 text-violet-300 border-violet-500/40 animate-pulse',
+            borderClass: 'border-violet-400 scale-100 shadow-[0_0_25px_rgba(167,139,250,0.35)]',
+          });
         }
 
-        const detection = await detectFaceFast(videoRef.current);
-
-        if (overlayCanvasRef.current && videoRef.current) {
-          const overlay = overlayCanvasRef.current;
-          overlay.width = videoRef.current.videoWidth || 640;
-          overlay.height = videoRef.current.videoHeight || 480;
-          const ctx = overlay.getContext('2d');
-          if (ctx) {
-            ctx.clearRect(0, 0, overlay.width, overlay.height);
-            if (detection) {
-              const { x, y, width, height } = detection.box;
-              ctx.strokeStyle = '#10b981';
-              ctx.lineWidth = 3;
-              ctx.strokeRect(x, y, width, height);
-            }
-          }
-        }
-
-        if (!detection) {
-          const now = Date.now();
-          if (now - lastDetectionTimeRef.current > 1200) {
-            activeDetectorRef.current.reset();
-            livenessFramesRef.current = [];
-            setChallengeUI({
-              text: 'Tengok Kiri / Kanan',
-              subtext: 'Arahkan kepala sedikit ke kiri atau ke kanan',
-              badgeClass: 'bg-muted/80 text-muted-foreground border-border',
-              borderClass: 'border-white/30 scale-100',
-            });
-          }
-          return;
-        }
-
-        lastDetectionTimeRef.current = Date.now();
-
-        const now = Date.now();
-        if (now - lastLivenessCaptureRef.current >= 120 && videoRef.current) {
+        if (shouldCapture && videoRef.current.readyState >= 2) {
           const frame = await captureFrameBlob(videoRef.current);
           if (frame) {
-            const frameLimit = Math.max(config?.settings?.capture_frame_count || 5, 6);
-            livenessFramesRef.current = [...livenessFramesRef.current, frame].slice(-frameLimit);
-            lastLivenessCaptureRef.current = now;
+            livenessFramesRef.current = [...livenessFramesRef.current, frame];
           }
         }
 
-        const activeResult = activeDetectorRef.current.update(detection.landmarks);
-        setChallengeUI({
-          text: activeResult.text,
-          subtext: activeResult.subtext,
-          badgeClass: activeResult.badgeClass,
-          borderClass: activeResult.borderClass,
-        });
-
-        if (activeResult.verified) {
-          const challengeFrames = [...livenessFramesRef.current];
+        const requiredFrames = config?.settings?.capture_frame_count || 5;
+        if (sequenceStep >= 40 && livenessFramesRef.current.length >= requiredFrames) {
+          serverOnlyTimerRef.current = 0;
+          const challengeFrames = [...livenessFramesRef.current].slice(0, requiredFrames);
           livenessFramesRef.current = [];
-          await triggerRecognition(
-            activeDetectorRef.current.getChallenge(),
-            challengeFrames
-          );
+          await triggerRecognition('HEAD_TURN', challengeFrames);
           return;
+        }
+
+        if (sequenceStep >= 45) {
+          serverOnlyTimerRef.current = 0;
+          livenessFramesRef.current = [];
+          beginErrorCooldown('Kamera belum menangkap frame yang cukup. Silakan posisikan wajah lalu coba lagi.');
         }
       } catch (err) {
       } finally {
@@ -496,7 +436,7 @@ export function KioskPage() {
     }, 100);
 
     return () => clearInterval(loopInterval);
-  }, [cameraActive, modelReady, cachedEmployees, config, selectedType, pythonEngineActive]);
+  }, [cameraActive, cachedEmployees, config, selectedType, pythonEngineActive]);
 
   const generateUuid = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -556,7 +496,7 @@ export function KioskPage() {
       top2_score: verificationMeta?.top2_score || null,
       score_margin: verificationMeta?.score_margin || null,
       passive_spoof_score: verificationMeta?.passive_spoof_score || null,
-      active_liveness_type: verificationMeta?.challenge_type || activeDetectorRef.current.getChallenge(),
+      active_liveness_type: verificationMeta?.challenge_type || 'HEAD_TURN',
       captured_frames: verificationMeta?.captured_frames || 1,
       consistent_frames: verificationMeta?.consistent_frames || 1,
       quality_score: verificationMeta?.quality_metrics?.quality_score || 100,
@@ -615,7 +555,14 @@ export function KioskPage() {
       setScanStatus('idle');
       scanLockRef.current = false;
       successTimeoutRef.current = null;
-      activeDetectorRef.current.pickRandomChallenge(config?.settings?.allowed_challenges);
+      serverOnlyTimerRef.current = 0;
+      livenessFramesRef.current = [];
+      setChallengeUI({
+        text: 'Hadap Lurus',
+        subtext: 'Posisikan wajah di dalam bingkai',
+        badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
+        borderClass: 'border-white/30 scale-100',
+      });
     }, 3500);
   };
 
@@ -660,10 +607,6 @@ export function KioskPage() {
               className="w-full h-full object-cover transform -scale-x-100"
             />
             <canvas ref={canvasRef} className="hidden" />
-            <canvas
-              ref={overlayCanvasRef}
-              className="absolute inset-0 w-full h-full pointer-events-none transform -scale-x-100"
-            />
 
             <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
               <div
@@ -680,21 +623,6 @@ export function KioskPage() {
                 {challengeUI.text.includes('Tengok') && (
                   <div className="absolute top-1/3 flex items-center justify-center text-indigo-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
                     <ScanFace className="h-6 w-6" />
-                  </div>
-                )}
-                {challengeUI.text.includes('Buka') && (
-                  <div className="absolute top-1/3 flex items-center justify-center text-purple-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-pulse">
-                    <Smile className="h-6 w-6" />
-                  </div>
-                )}
-                {challengeUI.text.includes('Kedip') && !challengeUI.text.includes('Tengok') && (
-                  <div className="absolute top-1/3 flex items-center justify-center text-sky-400 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full animate-bounce">
-                    <Eye className="h-6 w-6" />
-                  </div>
-                )}
-                {challengeUI.text.includes('Tertutup') && (
-                  <div className="absolute top-1/3 flex items-center justify-center text-amber-300 bg-black/40 backdrop-blur-xs px-3 py-1.5 rounded-full">
-                    <EyeOff className="h-6 w-6" />
                   </div>
                 )}
                 {challengeUI.text.includes('Terverifikasi') && (
@@ -733,10 +661,14 @@ export function KioskPage() {
 
                 <Badge
                   variant="outline"
-                  className="gap-1 bg-purple-500/20 text-purple-300 border-purple-500/30 backdrop-blur-md px-2.5 py-1 text-xs"
+                  className={`gap-1 backdrop-blur-md px-2.5 py-1 text-xs ${
+                    pythonEngineActive
+                      ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                  }`}
                 >
                   <ShieldCheck className="h-3 w-3" />
-                  <span>Server Liveness Aktif</span>
+                  <span>{pythonEngineActive ? 'Server Liveness Aktif' : 'Menghubungkan Mesin Wajah'}</span>
                 </Badge>
               </div>
 

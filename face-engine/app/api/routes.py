@@ -115,12 +115,18 @@ def gallery_collision_scan(
 @router.post("/api/v1/enroll", response_model=EnrollResponse)
 async def enroll_face(
     external_karyawan_id: int = Form(...),
+    pose_label: str = Form("front"),
     images: List[UploadFile] = File(...),
     x_biometric_secret: Optional[str] = Header(None, alias="X-Biometric-Secret"),
 ):
     require_biometric_secret(x_biometric_secret)
     if not images or len(images) == 0:
         raise HTTPException(status_code=400, detail="Tidak ada gambar yang dikirim")
+
+    normalized_pose = pose_label.strip().lower()
+    allowed_poses = {"front", "slight_left", "slight_right"}
+    if normalized_pose not in allowed_poses:
+        raise HTTPException(status_code=422, detail="Pose wajah tidak valid")
 
     embeddings = []
     secondary_embeddings = []
@@ -145,7 +151,11 @@ async def enroll_face(
             else:
                 raise HTTPException(status_code=400, detail="Gagal mendeteksi wajah")
 
-        is_valid, q_code, q_msg, q_metrics = check_frame_quality(img_bgr, face)
+        is_valid, q_code, q_msg, q_metrics = check_frame_quality(
+            img_bgr,
+            face,
+            expected_pose=normalized_pose,
+        )
         if not is_valid:
             raise HTTPException(status_code=400, detail=f"{q_code}: {q_msg}")
 

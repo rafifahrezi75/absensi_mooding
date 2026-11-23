@@ -47,8 +47,9 @@ class HrdController extends Controller
             ], 403);
         }
 
+        $request->session()->regenerate();
         $token = bin2hex(random_bytes(32));
-        session(['hrd_user_id' => $user->id, 'hrd_token' => $token]);
+        $request->session()->put(['hrd_user_id' => $user->id, 'hrd_token' => $token]);
         Cache::put("hrd_token:{$token}", $user->id, now()->addHours(8));
 
         return response()->json([
@@ -70,7 +71,8 @@ class HrdController extends Controller
         if ($token) {
             Cache::forget("hrd_token:{$token}");
         }
-        session()->forget(['hrd_user_id', 'hrd_token']);
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
 
         return response()->json([
             'success' => true,

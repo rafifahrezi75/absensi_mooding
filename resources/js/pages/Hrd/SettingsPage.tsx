@@ -325,7 +325,7 @@ export function SettingsPage() {
                 <div className="text-muted-foreground text-[11px]">Anti-Spoofing Liveness</div>
                 <div className="flex items-center gap-1 font-semibold text-purple-600 dark:text-purple-400">
                   <Sparkles className="h-3.5 w-3.5" />
-                  <span>MediaPipe EAR Kedip Mata</span>
+                  <span>Gerakan Kepala + Deteksi Server</span>
                 </div>
               </div>
             </CardContent>

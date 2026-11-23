@@ -17,7 +17,8 @@ Route::prefix('integrations/face-attendance')->middleware('hmac')->group(functio
 
 Route::prefix('kiosk')->group(function () {
     Route::get('/config', [KioskController::class, 'config']);
-    Route::post('/auth-verify', [KioskController::class, 'verifyHrdPin'])->middleware('throttle:10,1');
+    Route::post('/auth-verify', [KioskController::class, 'verifyHrdPin'])
+        ->middleware([StartSession::class, 'throttle:10,1']);
     Route::get('/employees-cache', [KioskController::class, 'employeesCache']);
     Route::post('/attendance-tap', [KioskController::class, 'recordTap']);
     Route::post('/fallback-tap', [KioskController::class, 'recordFallbackTap'])->middleware('throttle:10,1');

@@ -16,19 +16,10 @@ import {
   AlertCircle,
   FileCheck2,
   BrainCircuit,
-  Eye,
-  EyeOff,
-  Sparkles,
   ShieldCheck,
 } from 'lucide-react';
 import {
-  loadBiometricModels,
-  detectFaceWithDescriptor,
-  isBiometricModelsLoaded,
   checkPythonEngineHealth,
-  BlinkDetector,
-  BlinkStage,
-  getBlinkInstruction,
 } from '@/lib/biometricEngine';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -47,28 +38,18 @@ export function EmployeesPage() {
   const [consentChecked, setConsentChecked] = useState<boolean>(false);
   const [poseLabel, setPoseLabel] = useState<string>('front');
   const [enrolling, setEnrolling] = useState<boolean>(false);
-  const [modelReady, setModelReady] = useState<boolean>(false);
 
   const [pinModalOpen, setPinModalOpen] = useState<boolean>(false);
   const [newPin, setNewPin] = useState<string>('');
   const [savingPin, setSavingPin] = useState<boolean>(false);
 
   const [syncingMaster, setSyncingMaster] = useState<boolean>(false);
-  const [autoBlinkEnroll, setAutoBlinkEnroll] = useState<boolean>(true);
-  const [enrollBlinkStage, setEnrollBlinkStage] = useState<BlinkStage>('no_face');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const enrollStreamRef = useRef<MediaStream | null>(null);
-  const enrollBlinkDetectorRef = useRef<BlinkDetector>(new BlinkDetector());
-  const enrollLoopRef = useRef<any>(null);
-  const isEnrollingRef = useRef<boolean>(false);
-  const consentCheckedRef = useRef<boolean>(false);
 
   useEffect(() => {
     fetchEmployees();
-    loadBiometricModels()
-      .then(() => setModelReady(true))
-      .catch(() => {});
 
     return () => {
       stopCamera();
@@ -117,66 +98,16 @@ export function EmployeesPage() {
     setPoseLabel('front');
     setEnrollModalOpen(true);
 
-    if (!isBiometricModelsLoaded()) {
-      loadBiometricModels().then(() => setModelReady(true));
-    }
-
     setTimeout(() => {
       startCamera();
     }, 250);
   };
 
   const closeEnrollModal = () => {
-    if (enrollLoopRef.current) clearInterval(enrollLoopRef.current);
     stopCamera();
     setEnrollModalOpen(false);
     setSelectedEmployee(null);
-    setEnrollBlinkStage('no_face');
-    enrollBlinkDetectorRef.current.reset();
   };
-
-  useEffect(() => {
-    consentCheckedRef.current = consentChecked;
-  }, [consentChecked]);
-
-  useEffect(() => {
-    if (!enrollModalOpen || !autoBlinkEnroll) {
-      if (enrollLoopRef.current) clearInterval(enrollLoopRef.current);
-      setEnrollBlinkStage('no_face');
-      enrollBlinkDetectorRef.current.reset();
-      return;
-    }
-
-    enrollLoopRef.current = setInterval(async () => {
-      if (!videoRef.current || isEnrollingRef.current || videoRef.current.readyState < 2) {
-        return;
-      }
-
-      try {
-        const detection = await detectFaceWithDescriptor(videoRef.current);
-        if (!detection) {
-          enrollBlinkDetectorRef.current.reset();
-          setEnrollBlinkStage('no_face');
-          return;
-        }
-
-        const bState = enrollBlinkDetectorRef.current.update(detection.landmarks);
-        setEnrollBlinkStage(bState.stage);
-
-        if (bState.blinkDetected) {
-          if (consentCheckedRef.current) {
-            handleCaptureAndEnroll();
-          } else {
-            toast.info('Centang persetujuan biometrik (UU PDP) untuk mengaktifkan simpan otomatis');
-          }
-        }
-      } catch (err) {}
-    }, 200);
-
-    return () => {
-      if (enrollLoopRef.current) clearInterval(enrollLoopRef.current);
-    };
-  }, [enrollModalOpen, autoBlinkEnroll]);
 
   const startCamera = async () => {
     stopCamera();
@@ -210,14 +141,13 @@ export function EmployeesPage() {
   };
 
   const handleCaptureAndEnroll = async () => {
-    if (!consentCheckedRef.current && !consentChecked) {
+    if (!consentChecked) {
       toast.error('Wajib mencentang persetujuan pemrosesan biometrik (UU PDP)');
       return;
     }
     if (!videoRef.current || !selectedEmployee) return;
 
     setEnrolling(true);
-    isEnrollingRef.current = true;
     try {
       let photoBase64: string | null = null;
       const canvas = document.createElement('canvas');
@@ -237,6 +167,7 @@ export function EmployeesPage() {
         if (blob) {
           const formData = new FormData();
           formData.append('external_karyawan_id', selectedEmployee.id.toString());
+          formData.append('pose_label', poseLabel);
           formData.append('images', blob, 'enroll.jpg');
 
           const pyRes = await fetch('/api/face-engine/api/v1/enroll', {
@@ -292,7 +223,6 @@ export function EmployeesPage() {
             const errJson = await pyRes.json().catch(() => ({}));
             toast.error(errJson.detail || 'Wajah tidak terdeteksi di mesin InsightFace');
             setEnrolling(false);
-            isEnrollingRef.current = false;
             return;
           }
         }
@@ -303,7 +233,6 @@ export function EmployeesPage() {
       toast.error(err.response?.data?.message || 'Gagal menyimpan biometrik wajah');
     } finally {
       setEnrolling(false);
-      isEnrollingRef.current = false;
     }
   };
 
@@ -333,8 +262,6 @@ export function EmployeesPage() {
       setSavingPin(false);
     }
   };
-
-  const enrollInstruction = getBlinkInstruction(enrollBlinkStage);
 
   return (
     <HrdLayout>
@@ -580,7 +507,7 @@ export function EmployeesPage() {
               <span>Pendaftaran Wajah: {selectedEmployee?.nama_karyawan}</span>
             </DialogTitle>
             <DialogDescription>
-              Arahkan wajah karyawan tegak ke kamera. Ekstraksi biometrik InsightFace 512D otomatis diproses saat kedipan mata terverifikasi (UU PDP No. 27/2022).
+              Pilih pose yang akan direkam, arahkan wajah sesuai petunjuk, lalu ambil foto. Tidak perlu berkedip atau membuka mulut.
             </DialogDescription>
           </DialogHeader>
 
@@ -594,46 +521,12 @@ export function EmployeesPage() {
                 className="w-full h-full object-cover transform -scale-x-100"
               />
               <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                <div
-                  className={`w-48 h-60 rounded-[48%] border-2 transition-all duration-300 flex items-center justify-center relative ${
-                    autoBlinkEnroll ? enrollInstruction.borderClass : 'border-primary/60 border-dashed'
-                  }`}
-                >
-                  {autoBlinkEnroll && enrollBlinkStage === 'eyes_open' && (
-                    <div className="flex items-center justify-center text-sky-400 bg-black/50 backdrop-blur-xs px-2.5 py-1 rounded-full animate-bounce">
-                      <Eye className="h-5 w-5" />
-                    </div>
-                  )}
-                  {autoBlinkEnroll && enrollBlinkStage === 'eyes_closing' && (
-                    <div className="flex items-center justify-center text-amber-300 bg-black/50 backdrop-blur-xs px-2.5 py-1 rounded-full">
-                      <EyeOff className="h-5 w-5" />
-                    </div>
-                  )}
-                  {autoBlinkEnroll && enrollBlinkStage === 'blink_verified' && (
-                    <div className="flex items-center justify-center text-emerald-400 bg-black/50 backdrop-blur-xs px-2.5 py-1 rounded-full animate-pulse">
-                      <CheckCircle2 className="h-5 w-5" />
-                    </div>
-                  )}
+                <div className="w-48 h-60 rounded-[48%] border-2 border-primary/60 border-dashed" />
+                <div className="mt-2.5 rounded-full border border-white/20 bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow-md backdrop-blur-md">
+                  {poseLabel === 'front' && 'Hadap lurus ke kamera'}
+                  {poseLabel === 'slight_left' && 'Tengok sedikit ke kiri'}
+                  {poseLabel === 'slight_right' && 'Tengok sedikit ke kanan'}
                 </div>
-
-                {autoBlinkEnroll && (
-                  <div className="mt-2.5 pointer-events-auto">
-                    <div
-                      className={`px-3 py-1.5 rounded-full border backdrop-blur-md flex items-center gap-1.5 shadow-md text-xs font-semibold ${enrollInstruction.badgeClass}`}
-                    >
-                      {enrollBlinkStage === 'eyes_open' ? (
-                        <Eye className="h-3.5 w-3.5 text-sky-400 animate-pulse" />
-                      ) : enrollBlinkStage === 'eyes_closing' ? (
-                        <EyeOff className="h-3.5 w-3.5 text-amber-300" />
-                      ) : enrollBlinkStage === 'blink_verified' ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                      ) : (
-                        <ScanFace className="h-3.5 w-3.5 text-muted-foreground" />
-                      )}
-                      <span>{enrollInstruction.text}</span>
-                    </div>
-                  </div>
-                )}
               </div>
 
               <div className="absolute top-2 left-2 flex items-center gap-1.5">
@@ -641,12 +534,6 @@ export function EmployeesPage() {
                   <BrainCircuit className="h-3 w-3 text-blue-400" />
                   <span>InsightFace 512D</span>
                 </Badge>
-                {autoBlinkEnroll && (
-                  <Badge variant="outline" className="gap-1 bg-purple-500/30 text-purple-200 border-purple-500/40 text-[10px]">
-                    <Sparkles className="h-3 w-3" />
-                    <span>Liveness Aktif</span>
-                  </Badge>
-                )}
               </div>
             </div>
 
@@ -654,34 +541,29 @@ export function EmployeesPage() {
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-primary" />
                 <div>
-                  <div className="text-xs font-semibold">Mode Verifikasi Kedip (e-KYC)</div>
-                  <div className="text-[10px] text-muted-foreground">Kamera otomatis jepret dan simpan saat mata berkedip</div>
+                  <div className="text-xs font-semibold">Perekaman Manual Berpanduan</div>
+                  <div className="text-[10px] text-muted-foreground">Foto diperiksa mesin sesuai pose yang dipilih</div>
                 </div>
               </div>
-              <Button
-                type="button"
-                variant={autoBlinkEnroll ? 'default' : 'outline'}
-                size="sm"
-                className="h-7 text-xs px-2.5"
-                onClick={() => setAutoBlinkEnroll(!autoBlinkEnroll)}
-              >
-                {autoBlinkEnroll ? 'Aktif' : 'Manual'}
-              </Button>
             </div>
 
             <div className="space-y-2">
               <label className="text-xs font-semibold text-muted-foreground">Pose Wajah</label>
               <div className="flex rounded-md border p-0.5 bg-muted/40 text-xs">
-                {['front', 'slight_left', 'slight_right'].map((p) => (
+                {[
+                  { value: 'front', label: 'Lurus' },
+                  { value: 'slight_left', label: 'Kiri' },
+                  { value: 'slight_right', label: 'Kanan' },
+                ].map((pose) => (
                   <button
-                    key={p}
+                    key={pose.value}
                     type="button"
-                    onClick={() => setPoseLabel(p)}
+                    onClick={() => setPoseLabel(pose.value)}
                     className={`flex-1 py-1 rounded-sm font-medium capitalize transition-colors ${
-                      poseLabel === p ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
+                      poseLabel === pose.value ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
                     }`}
                   >
-                    {p.replace('_', ' ')}
+                    {pose.label}
                   </button>
                 ))}
               </div>

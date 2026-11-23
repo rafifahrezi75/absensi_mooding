@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     max_yaw: float = 25.0
     max_pitch: float = 25.0
     max_roll: float = 25.0
+    enrollment_side_min_yaw: float = 5.0
+    enrollment_side_max_yaw: float = 45.0
 
     enable_liveness: bool = True
     enable_passive_anti_spoof: bool = True
