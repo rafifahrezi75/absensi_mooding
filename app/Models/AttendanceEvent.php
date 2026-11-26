@@ -28,6 +28,8 @@ class AttendanceEvent extends Model
         'confidence_score',
         'liveness_passed',
         'proof_photo_path',
+        'proof_photo_left_path',
+        'proof_photo_right_path',
         'latitude',
         'longitude',
         'external_absensi_id',
@@ -53,11 +55,23 @@ class AttendanceEvent extends Model
 
     protected $appends = [
         'proof_photo_url',
+        'proof_photo_left_url',
+        'proof_photo_right_url',
     ];
 
     public function getProofPhotoUrlAttribute(): ?string
     {
-        return $this->proof_photo_path ? '/storage/' . $this->proof_photo_path : null;
+        return $this->proof_photo_path ? '/storage/'.$this->proof_photo_path : null;
+    }
+
+    public function getProofPhotoLeftUrlAttribute(): ?string
+    {
+        return $this->proof_photo_left_path ? '/storage/'.$this->proof_photo_left_path : null;
+    }
+
+    public function getProofPhotoRightUrlAttribute(): ?string
+    {
+        return $this->proof_photo_right_path ? '/storage/'.$this->proof_photo_right_path : null;
     }
 
     public function employee(): BelongsTo

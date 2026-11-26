@@ -17,6 +17,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -250,7 +251,7 @@ class HrdController extends Controller
     {
         $employee = Employee::with([
             'faceEmbeddings' => function ($q) {
-                $q->with('enroller')->orderBy('id', 'desc');
+                $q->where('is_active', true)->with('enroller')->orderBy('id', 'desc');
             },
             'attendanceEvents' => function ($q) {
                 $q->with(['location', 'device'])
@@ -278,17 +279,24 @@ class HrdController extends Controller
 
             return [
                 'id' => $fb->id,
+                'batch_id' => $fb->batch_id,
+                'model_name' => $fb->model_name,
                 'model_version' => $fb->model_version,
                 'pose_label' => $fb->pose_label,
                 'photo_path' => $fb->photo_path,
                 'photo_url' => $fb->photo_url,
                 'is_active' => $fb->is_active,
                 'dimensions' => $dimensions,
+                'quality_score' => $fb->quality_score,
+                'pose_yaw' => $fb->pose_yaw,
                 'vector_preview' => $preview,
                 'enrolled_by_name' => $fb->enroller ? $fb->enroller->name : 'HRD',
                 'created_at' => $fb->created_at ? $fb->created_at->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s') : null,
+                'created_ts' => $fb->created_at ? $fb->created_at->timestamp : 0,
             ];
         });
+
+        $facePackets = $this->buildFacePackets($embeddings->all());
 
         $attendances = $employee->attendanceEvents->map(function ($ev) {
             return [
@@ -340,6 +348,7 @@ class HrdController extends Controller
                 'location_name' => $location->location_name,
             ] : null,
             'face_embeddings' => $embeddings,
+            'face_packets' => $facePackets,
             'recent_attendances' => $attendances,
         ]);
     }
@@ -448,6 +457,11 @@ class HrdController extends Controller
             'pose_pitch' => 'nullable|numeric',
             'pose_roll' => 'nullable|numeric',
             'consent_given' => 'required|boolean|accepted',
+            'replace_existing' => 'nullable|boolean',
+            'replace_embedding_id' => 'nullable|integer',
+            'batch_id' => 'nullable|string|max:36',
+            'packet_embedding_ids' => 'nullable|array',
+            'packet_embedding_ids.*' => 'integer',
             'photo_base64' => 'nullable|string',
             'templates' => 'required_without:embedding_vector|array|min:1|max:10',
             'templates.*.embedding_vector' => 'required_with:templates|array|min:128|max:512',
@@ -467,9 +481,6 @@ class HrdController extends Controller
         $userId = session('hrd_user_id');
         $modelName = $validated['model_name'] ?? config('biometric.model.name', 'buffalo_s');
         $modelVersion = $validated['model_version'] ?? config('biometric.model.version', 'arcface_r50_v1');
-
-        $createdEmbeddings = [];
-        $vectorsToSync = [];
 
         $templateItems = [];
         if (! empty($validated['templates']) && is_array($validated['templates'])) {
@@ -503,48 +514,82 @@ class HrdController extends Controller
             }
         }
 
-        foreach ($templateItems as $tmpl) {
-            $templateModelName = strtolower($tmpl['model_name'] ?? $modelName);
-            $templateModelVersion = $tmpl['model_version'] ?? $modelVersion;
-            $photoPath = null;
-            if (! empty($tmpl['photo_base64'])) {
-                $imageData = $tmpl['photo_base64'];
-                if (preg_match('/^data:image\/(\w+);base64,/', $imageData, $type)) {
-                    $imageData = substr($imageData, strpos($imageData, ',') + 1);
-                    $type = strtolower($type[1]);
-                    if (! in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
-                        $type = 'jpg';
+        $createdEmbeddings = DB::transaction(function () use (
+            $employee,
+            $templateItems,
+            $modelName,
+            $modelVersion,
+            $userId,
+            $request,
+            $validated
+        ): array {
+            $batchId = $validated['batch_id'] ?? null;
+            $replaceEmbeddingId = $validated['replace_embedding_id'] ?? null;
+
+            if ($replaceEmbeddingId) {
+                $targetEmbedding = FaceEmbedding::where('employee_id', $employee->id)
+                    ->where('is_active', true)
+                    ->find($replaceEmbeddingId);
+
+                if ($targetEmbedding) {
+                    if ($targetEmbedding->batch_id) {
+                        $batchId = $targetEmbedding->batch_id;
+                    } else {
+                        $batchId = $batchId ?: (string) Str::uuid();
+                        if (! empty($validated['packet_embedding_ids'])) {
+                            FaceEmbedding::where('employee_id', $employee->id)
+                                ->where('is_active', true)
+                                ->whereIn('id', $validated['packet_embedding_ids'])
+                                ->whereNull('batch_id')
+                                ->update(['batch_id' => $batchId]);
+                        }
                     }
-                } else {
-                    $type = 'jpg';
+
+                    $pairedIds = $this->findPairedEmbeddingIds($employee->id, $targetEmbedding);
+                    FaceEmbedding::where('employee_id', $employee->id)
+                        ->whereIn('id', $pairedIds)
+                        ->update(['is_active' => false]);
                 }
-                $decoded = base64_decode($imageData);
-                if ($decoded !== false) {
-                    $fileName = 'faces/face_'.$employee->id.'_'.time().'_'.Str::random(6).'.'.$type;
-                    Storage::disk('public')->put($fileName, $decoded);
-                    $photoPath = $fileName;
-                }
+            } elseif ($request->boolean('replace_existing')) {
+                FaceEmbedding::where('employee_id', $employee->id)
+                    ->where('is_active', true)
+                    ->update(['is_active' => false]);
             }
 
-            $embedding = FaceEmbedding::create([
-                'employee_id' => $employee->id,
-                'embedding_vector' => json_encode($tmpl['embedding_vector']),
-                'model_name' => $templateModelName,
-                'model_version' => $templateModelVersion,
-                'pose_label' => $tmpl['pose_label'] ?? 'front',
-                'quality_score' => $tmpl['quality_score'] ?? null,
-                'blur_score' => $tmpl['blur_score'] ?? null,
-                'brightness_score' => $tmpl['brightness_score'] ?? null,
-                'pose_yaw' => $tmpl['pose_yaw'] ?? null,
-                'pose_pitch' => $tmpl['pose_pitch'] ?? null,
-                'pose_roll' => $tmpl['pose_roll'] ?? null,
-                'photo_path' => $photoPath,
-                'enrolled_by' => $userId,
-                'is_active' => true,
-            ]);
+            if (! $batchId) {
+                $batchId = (string) Str::uuid();
+            }
 
-            $createdEmbeddings[] = $embedding;
-        }
+            $created = [];
+
+            foreach ($templateItems as $tmpl) {
+                $templateModelName = strtolower($tmpl['model_name'] ?? $modelName);
+                $templateModelVersion = $tmpl['model_version'] ?? $modelVersion;
+                $photoPath = $this->storeBase64FaceImage($tmpl['photo_base64'] ?? null, 'faces/face_'.$employee->id);
+
+                $embedding = FaceEmbedding::create([
+                    'employee_id' => $employee->id,
+                    'batch_id' => $batchId,
+                    'embedding_vector' => json_encode($tmpl['embedding_vector']),
+                    'model_name' => $templateModelName,
+                    'model_version' => $templateModelVersion,
+                    'pose_label' => $tmpl['pose_label'] ?? 'front',
+                    'quality_score' => $tmpl['quality_score'] ?? null,
+                    'blur_score' => $tmpl['blur_score'] ?? null,
+                    'brightness_score' => $tmpl['brightness_score'] ?? null,
+                    'pose_yaw' => $tmpl['pose_yaw'] ?? null,
+                    'pose_pitch' => $tmpl['pose_pitch'] ?? null,
+                    'pose_roll' => $tmpl['pose_roll'] ?? null,
+                    'photo_path' => $photoPath,
+                    'enrolled_by' => $userId,
+                    'is_active' => true,
+                ]);
+
+                $created[] = $embedding;
+            }
+
+            return $created;
+        });
 
         $updateData = [
             'biometric_consent_at' => now(),
@@ -561,57 +606,7 @@ class HrdController extends Controller
         }
         $employee->update($updateData);
 
-        $vectorsToSync = $employee->faceEmbeddings()
-            ->where('is_active', true)
-            ->get()
-            ->map(function (FaceEmbedding $embedding): ?array {
-                $vector = json_decode($embedding->embedding_vector, true);
-                $modelName = strtolower($embedding->model_name ?: config('biometric.model.name', 'buffalo_s'));
-                $expectedDimension = $modelName === 'sface' ? 128 : 512;
-
-                if (! is_array($vector) || count($vector) !== $expectedDimension) {
-                    return null;
-                }
-
-                return [
-                    'vector' => $vector,
-                    'model_name' => $modelName,
-                    'model_version' => $embedding->model_version,
-                    'pose_label' => $embedding->pose_label,
-                    'quality_score' => $embedding->quality_score ?? 100.0,
-                ];
-            })
-            ->filter()
-            ->values()
-            ->all();
-
-        if (! empty($vectorsToSync)) {
-            try {
-                Http::withHeaders([
-                    'X-Biometric-Secret' => (string) config('biometric.shared_secret'),
-                ])->connectTimeout(1)->timeout(10)->post(
-                    rtrim((string) config('biometric.engine_url'), '/').'/api/v1/cache/sync',
-                    [
-                        'replace_all' => false,
-                        'employees' => [
-                            [
-                                'employee_id' => $employee->id,
-                                'external_karyawan_id' => $employee->id,
-                                'company_id' => $employee->company_id,
-                                'entitasshelter_id' => $employee->entitasshelter_id,
-                                'cabang_id' => $employee->cabang_id,
-                                'proyek_id' => $employee->proyek_id,
-                                'id_karyawan' => $employee->id_karyawan,
-                                'id_absensi' => $employee->id_absensi,
-                                'nama_karyawan' => $employee->nama_karyawan,
-                                'embeddings' => $vectorsToSync,
-                            ],
-                        ],
-                    ])->throw();
-            } catch (\Throwable $exception) {
-                report($exception);
-            }
-        }
+        $this->syncEmployeeEmbeddingsToEngine($employee);
 
         $firstEmbedding = $createdEmbeddings[0] ?? null;
 
@@ -619,10 +614,82 @@ class HrdController extends Controller
             'success' => true,
             'message' => 'Pendaftaran wajah biometrik berhasil disimpan',
             'enrolled_count' => count($createdEmbeddings),
+            'batch_id' => $firstEmbedding ? $firstEmbedding->batch_id : null,
             'embedding_id' => $firstEmbedding ? $firstEmbedding->id : null,
             'employee_id' => $employee->id,
             'photo_url' => $firstEmbedding ? $firstEmbedding->photo_url : null,
             'biometric_consent_at' => $employee->biometric_consent_at->toIso8601String(),
+        ]);
+    }
+
+    public function deleteFaceEmbedding(Request $request, $id, $embeddingId): JsonResponse
+    {
+        $employee = Employee::findOrFail($id);
+        $embedding = FaceEmbedding::where('employee_id', $employee->id)
+            ->where('is_active', true)
+            ->findOrFail($embeddingId);
+
+        $targetIds = $this->findPairedEmbeddingIds($employee->id, $embedding);
+
+        DB::transaction(function () use ($employee, $targetIds): void {
+            FaceEmbedding::where('employee_id', $employee->id)
+                ->where('is_active', true)
+                ->whereIn('id', $targetIds)
+                ->update(['is_active' => false]);
+        });
+
+        $this->syncEmployeeEmbeddingsToEngine($employee);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Foto biometrik wajah berhasil dihapus',
+            'deleted_ids' => $targetIds,
+            'remaining_active_count' => $employee->faceEmbeddings()->where('is_active', true)->count(),
+        ]);
+    }
+
+    public function deleteFacePacket(Request $request, $id): JsonResponse
+    {
+        $employee = Employee::findOrFail($id);
+        $validated = $request->validate([
+            'batch_id' => 'nullable|string|max:36',
+            'embedding_ids' => 'nullable|array|min:1',
+            'embedding_ids.*' => 'integer',
+        ]);
+
+        if (empty($validated['batch_id']) && empty($validated['embedding_ids'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Target paket biometrik wajib ditentukan',
+            ], 422);
+        }
+
+        $query = FaceEmbedding::where('employee_id', $employee->id)->where('is_active', true);
+        if (! empty($validated['batch_id'])) {
+            $query->where('batch_id', $validated['batch_id']);
+        } else {
+            $query->whereIn('id', $validated['embedding_ids']);
+        }
+
+        $deletedCount = 0;
+        DB::transaction(function () use ($query, &$deletedCount): void {
+            $deletedCount = $query->update(['is_active' => false]);
+        });
+
+        if ($deletedCount === 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Paket foto biometrik tidak ditemukan',
+            ], 404);
+        }
+
+        $this->syncEmployeeEmbeddingsToEngine($employee);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Satu paket foto wajah berhasil dihapus',
+            'deleted_count' => $deletedCount,
+            'remaining_active_count' => $employee->faceEmbeddings()->where('is_active', true)->count(),
         ]);
     }
 
@@ -755,6 +822,10 @@ class HrdController extends Controller
                 'synced_at' => $event->synced_at ? Carbon::parse($event->synced_at)->setTimezone(config('app.timezone'))->format('Y-m-d H:i:s') : null,
                 'proof_photo_url' => $event->proof_photo_path ? '/storage/'.$event->proof_photo_path : null,
                 'proof_photo_path' => $event->proof_photo_path,
+                'proof_photo_left_url' => $event->proof_photo_left_path ? '/storage/'.$event->proof_photo_left_path : null,
+                'proof_photo_left_path' => $event->proof_photo_left_path,
+                'proof_photo_right_url' => $event->proof_photo_right_path ? '/storage/'.$event->proof_photo_right_path : null,
+                'proof_photo_right_path' => $event->proof_photo_right_path,
                 'shift_name' => $shift ? $shift->shift_name : ($event->shift_id ? 'Shift #'.$event->shift_id : '-'),
             ],
         ]);
@@ -894,5 +965,239 @@ class HrdController extends Controller
             'locations' => $locations,
             'devices' => $devices,
         ]);
+    }
+
+    private function storeBase64FaceImage(?string $base64Data, string $prefix): ?string
+    {
+        if (empty($base64Data)) {
+            return null;
+        }
+
+        $imageData = $base64Data;
+        if (preg_match('/^data:image\/(\w+);base64,/', $imageData, $type)) {
+            $imageData = substr($imageData, strpos($imageData, ',') + 1);
+            $type = strtolower($type[1]);
+            if (! in_array($type, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+                $type = 'jpg';
+            }
+        } else {
+            $type = 'jpg';
+        }
+
+        $decoded = base64_decode($imageData);
+        if ($decoded === false) {
+            return null;
+        }
+
+        $fileName = $prefix.'_'.time().'_'.Str::random(6).'.'.$type;
+        Storage::disk('public')->put($fileName, $decoded);
+
+        return $fileName;
+    }
+
+    private function findPairedEmbeddingIds(int $employeeId, FaceEmbedding $embedding): array
+    {
+        $ids = [$embedding->id];
+
+        $secondaryQuery = FaceEmbedding::where('employee_id', $employeeId)
+            ->where('is_active', true)
+            ->where('id', '!=', $embedding->id)
+            ->where('pose_label', $embedding->pose_label)
+            ->where(function ($q) {
+                $q->where('model_name', 'sface')
+                    ->orWhere('model_version', 'opencv_sface_2021dec');
+            });
+
+        if ($embedding->batch_id) {
+            $secondaryQuery->where('batch_id', $embedding->batch_id);
+        } elseif ($embedding->created_at) {
+            $secondaryQuery->whereBetween('created_at', [
+                $embedding->created_at->copy()->subSeconds(180),
+                $embedding->created_at->copy()->addSeconds(180),
+            ]);
+        }
+
+        return array_values(array_unique(array_merge(
+            $ids,
+            $secondaryQuery->pluck('id')->all()
+        )));
+    }
+
+    private function syncEmployeeEmbeddingsToEngine(Employee $employee): void
+    {
+        $vectorsToSync = $employee->faceEmbeddings()
+            ->where('is_active', true)
+            ->get()
+            ->map(function (FaceEmbedding $embedding): ?array {
+                $vector = json_decode($embedding->embedding_vector, true);
+                $modelName = strtolower($embedding->model_name ?: config('biometric.model.name', 'buffalo_s'));
+                $expectedDimension = $modelName === 'sface' ? 128 : 512;
+
+                if (! is_array($vector) || count($vector) !== $expectedDimension) {
+                    return null;
+                }
+
+                return [
+                    'vector' => $vector,
+                    'model_name' => $modelName,
+                    'model_version' => $embedding->model_version,
+                    'pose_label' => $embedding->pose_label,
+                    'quality_score' => $embedding->quality_score ?? 100.0,
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+
+        try {
+            Http::withHeaders([
+                'X-Biometric-Secret' => (string) config('biometric.shared_secret'),
+            ])->connectTimeout(1)->timeout(10)->post(
+                rtrim((string) config('biometric.engine_url'), '/').'/api/v1/cache/sync',
+                [
+                    'replace_all' => false,
+                    'employees' => [
+                        [
+                            'employee_id' => $employee->id,
+                            'external_karyawan_id' => $employee->id,
+                            'company_id' => $employee->company_id,
+                            'entitasshelter_id' => $employee->entitasshelter_id,
+                            'cabang_id' => $employee->cabang_id,
+                            'proyek_id' => $employee->proyek_id,
+                            'id_karyawan' => $employee->id_karyawan,
+                            'id_absensi' => $employee->id_absensi,
+                            'nama_karyawan' => $employee->nama_karyawan,
+                            'embeddings' => $vectorsToSync,
+                        ],
+                    ],
+                ]
+            )->throw();
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+    }
+
+    private function buildFacePackets(array $items): array
+    {
+        $primaryItems = [];
+        $secondaryByBatchAndPose = [];
+        $legacySecondaryItems = [];
+
+        foreach ($items as $item) {
+            $isSecondary = $item['dimensions'] === 128
+                && ($item['model_name'] === 'sface' || $item['model_version'] === 'opencv_sface_2021dec')
+                && empty($item['photo_url']);
+
+            if ($isSecondary) {
+                if (! empty($item['batch_id'])) {
+                    $secondaryByBatchAndPose[$item['batch_id'].':'.$item['pose_label']][] = $item;
+                } else {
+                    $legacySecondaryItems[] = $item;
+                }
+            } else {
+                $primaryItems[] = $item;
+            }
+        }
+
+        $batchedGroups = [];
+        $legacyPackets = [];
+
+        foreach ($primaryItems as $item) {
+            if (! empty($item['batch_id'])) {
+                $batchKey = 'batch:'.$item['batch_id'];
+                if (! isset($batchedGroups[$batchKey])) {
+                    $batchedGroups[$batchKey] = [
+                        'packet_key' => $batchKey,
+                        'batch_id' => $item['batch_id'],
+                        'created_at' => $item['created_at'],
+                        'created_ts' => $item['created_ts'],
+                        'enrolled_by_name' => $item['enrolled_by_name'],
+                        'latest_id' => $item['id'],
+                        'embedding_ids' => [],
+                        'poses' => [
+                            'front' => null,
+                            'slight_left' => null,
+                            'slight_right' => null,
+                        ],
+                    ];
+                }
+
+                $poseKey = $item['pose_label'];
+                $matchedSface = $secondaryByBatchAndPose[$item['batch_id'].':'.$poseKey] ?? [];
+                $item['has_sface'] = count($matchedSface) > 0;
+                $batchedGroups[$batchKey]['embedding_ids'][] = $item['id'];
+                foreach ($matchedSface as $sf) {
+                    $batchedGroups[$batchKey]['embedding_ids'][] = $sf['id'];
+                }
+                if (array_key_exists($poseKey, $batchedGroups[$batchKey]['poses']) && $batchedGroups[$batchKey]['poses'][$poseKey] === null) {
+                    $batchedGroups[$batchKey]['poses'][$poseKey] = $item;
+                }
+                continue;
+            }
+
+            $poseKey = $item['pose_label'];
+            $placed = false;
+            foreach ($legacyPackets as &$packet) {
+                $timeClose = abs($packet['created_ts'] - $item['created_ts']) <= 180;
+                if ($timeClose && array_key_exists($poseKey, $packet['poses']) && $packet['poses'][$poseKey] === null) {
+                    $matchedSfaceIds = [];
+                    foreach ($legacySecondaryItems as $sf) {
+                        if ($sf['pose_label'] === $poseKey && abs($sf['created_ts'] - $item['created_ts']) <= 180) {
+                            $matchedSfaceIds[] = $sf['id'];
+                        }
+                    }
+                    $item['has_sface'] = count($matchedSfaceIds) > 0;
+                    $packet['poses'][$poseKey] = $item;
+                    $packet['embedding_ids'][] = $item['id'];
+                    foreach ($matchedSfaceIds as $sfId) {
+                        $packet['embedding_ids'][] = $sfId;
+                    }
+                    $placed = true;
+                    break;
+                }
+            }
+            unset($packet);
+
+            if (! $placed) {
+                $matchedSfaceIds = [];
+                foreach ($legacySecondaryItems as $sf) {
+                    if ($sf['pose_label'] === $poseKey && abs($sf['created_ts'] - $item['created_ts']) <= 180) {
+                        $matchedSfaceIds[] = $sf['id'];
+                    }
+                }
+                $item['has_sface'] = count($matchedSfaceIds) > 0;
+                $legacyPackets[] = [
+                    'packet_key' => 'legacy:'.(count($legacyPackets) + 1),
+                    'batch_id' => null,
+                    'created_at' => $item['created_at'],
+                    'created_ts' => $item['created_ts'],
+                    'enrolled_by_name' => $item['enrolled_by_name'],
+                    'latest_id' => $item['id'],
+                    'embedding_ids' => array_merge([$item['id']], $matchedSfaceIds),
+                    'poses' => [
+                        'front' => $poseKey === 'front' ? $item : null,
+                        'slight_left' => $poseKey === 'slight_left' ? $item : null,
+                        'slight_right' => $poseKey === 'slight_right' ? $item : null,
+                    ],
+                ];
+            }
+        }
+
+        $allPackets = array_merge(array_values($batchedGroups), $legacyPackets);
+        usort($allPackets, fn (array $a, array $b): int => $b['latest_id'] <=> $a['latest_id']);
+
+        return array_map(function (array $packet): array {
+            $filledCount = collect($packet['poses'])->filter()->count();
+
+            return [
+                'packet_key' => $packet['packet_key'],
+                'batch_id' => $packet['batch_id'],
+                'created_at' => $packet['created_at'],
+                'enrolled_by_name' => $packet['enrolled_by_name'],
+                'embedding_ids' => array_values(array_unique($packet['embedding_ids'])),
+                'poses' => $packet['poses'],
+                'completed_count' => $filledCount,
+            ];
+        }, $allPackets);
     }
 }

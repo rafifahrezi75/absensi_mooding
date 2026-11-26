@@ -33,12 +33,15 @@ class FaceEngineProxyController extends Controller
                 $response = $httpRequest->get($engineUrl, $request->query());
             } elseif (count($request->allFiles()) > 0) {
                 foreach ($request->allFiles() as $name => $files) {
-                    if (is_array($files)) {
-                        foreach ($files as $file) {
-                            $httpRequest->attach($name, file_get_contents($file->getRealPath()), $file->getClientOriginalName());
+                    $fileList = is_array($files) ? $files : [$files];
+                    foreach ($fileList as $file) {
+                        if ($file && $file->isValid()) {
+                            $httpRequest->attach(
+                                $name,
+                                file_get_contents($file->getRealPath()),
+                                $file->getClientOriginalName() ?: 'file.bin'
+                            );
                         }
-                    } else {
-                        $httpRequest->attach($name, file_get_contents($files->getRealPath()), $files->getClientOriginalName());
                     }
                 }
                 $response = $httpRequest->post($engineUrl, $request->except(array_keys($request->allFiles())));

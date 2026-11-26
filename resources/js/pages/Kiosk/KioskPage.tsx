@@ -76,6 +76,7 @@ export function KioskPage() {
   const isDetectingRef = useRef<boolean>(false);
   const isDrawingFaceBoxRef = useRef<boolean>(false);
   const livenessFramesRef = useRef<Blob[]>([]);
+  const phaseProofRef = useRef<{ front?: Blob; slight_left?: Blob; slight_right?: Blob }>({});
   const errorCooldownTimeoutRef = useRef<number | null>(null);
   const errorCooldownIntervalRef = useRef<number | null>(null);
   const successTimeoutRef = useRef<number | null>(null);
@@ -266,6 +267,7 @@ export function KioskPage() {
     const cooldownEndsAt = Date.now() + cooldownMs;
     scanLockRef.current = true;
     livenessFramesRef.current = [];
+    phaseProofRef.current = {};
     serverOnlyTimerRef.current = 0;
     setScanStatus('cooldown');
     setCooldownSeconds(Math.ceil(cooldownMs / 1000));
@@ -353,7 +355,8 @@ export function KioskPage() {
             recRes.employee,
             recRes.confidence_score || recRes.top1_score || 0.85,
             recRes.is_cross_location,
-            recRes
+            recRes,
+            frames
           );
           return;
         } else if (recRes.decision === 'AMBIGUOUS' || recRes.status === 'ambiguous') {
@@ -425,7 +428,11 @@ export function KioskPage() {
       try {
         serverOnlyTimerRef.current++;
         const sequenceStep = serverOnlyTimerRef.current;
-        const shouldCapture = [3, 6, 9, 12, 15, 24, 33].includes(sequenceStep);
+        const identityFrameCount = config?.settings?.capture_frame_count || 5;
+        const requiredFrames = identityFrameCount + 2;
+        const shouldCapture =
+          [3, 6, 9, 12, 15, 22, 26, 32, 35].includes(sequenceStep) ||
+          (sequenceStep > 35 && livenessFramesRef.current.length < requiredFrames);
 
         if (sequenceStep < 18) {
           setChallengeUI({
@@ -454,14 +461,19 @@ export function KioskPage() {
           const frame = await captureFrameBlob(videoRef.current);
           if (frame) {
             livenessFramesRef.current = [...livenessFramesRef.current, frame];
+            if (sequenceStep < 18) {
+              phaseProofRef.current.front = frame;
+            } else if (sequenceStep < 29) {
+              phaseProofRef.current.slight_right = frame;
+            } else {
+              phaseProofRef.current.slight_left = frame;
+            }
           }
         }
 
-        const identityFrameCount = config?.settings?.capture_frame_count || 5;
-        const requiredFrames = identityFrameCount + 2;
         if (sequenceStep >= 36 && livenessFramesRef.current.length >= requiredFrames) {
           serverOnlyTimerRef.current = 0;
-          const challengeFrames = [...livenessFramesRef.current].slice(0, requiredFrames);
+          const challengeFrames = [...livenessFramesRef.current];
           livenessFramesRef.current = [];
           await triggerRecognition('HEAD_TURN', challengeFrames);
           return;
@@ -489,17 +501,48 @@ export function KioskPage() {
     });
   };
 
+  const blobToBase64 = (blob: Blob | null | undefined): Promise<string | null> => {
+    if (!blob) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  };
+
   const executeAttendanceTap = async (
     employee: any,
     confidenceScore: number,
     isCrossLocation: boolean,
-    verificationMeta?: any
+    verificationMeta?: any,
+    capturedFrames: Blob[] = []
   ) => {
     scanLockRef.current = true;
     setScanStatus('scanning');
 
-    let proofPhotoBase64: string | null = null;
-    if (videoRef.current && videoRef.current.readyState >= 2) {
+    const indices = verificationMeta?.proof_frame_indices;
+    const frontBlob =
+      (typeof indices?.front === 'number' ? capturedFrames[indices.front] : null) ||
+      phaseProofRef.current.front ||
+      null;
+    const leftBlob =
+      (typeof indices?.slight_left === 'number' ? capturedFrames[indices.slight_left] : null) ||
+      phaseProofRef.current.slight_left ||
+      null;
+    const rightBlob =
+      (typeof indices?.slight_right === 'number' ? capturedFrames[indices.slight_right] : null) ||
+      phaseProofRef.current.slight_right ||
+      null;
+
+    let [proofPhotoBase64, proofPhotoLeftBase64, proofPhotoRightBase64] = await Promise.all([
+      blobToBase64(frontBlob),
+      blobToBase64(leftBlob),
+      blobToBase64(rightBlob),
+    ]);
+    phaseProofRef.current = {};
+
+    if (!proofPhotoBase64 && videoRef.current && videoRef.current.readyState >= 2) {
       try {
         const snapCanvas = document.createElement('canvas');
         snapCanvas.width = Math.min(videoRef.current.videoWidth || 640, 640);
@@ -530,6 +573,8 @@ export function KioskPage() {
       liveness_passed: true,
       is_cross_location: isCrossLocation,
       proof_photo_base64: proofPhotoBase64,
+      proof_photo_left_base64: proofPhotoLeftBase64,
+      proof_photo_right_base64: proofPhotoRightBase64,
       session_id: verificationMeta?.session_id || idempotencyKey,
       decision: verificationMeta?.decision || 'VERIFIED',
       reject_reason: verificationMeta?.reject_reason || null,
@@ -600,6 +645,7 @@ export function KioskPage() {
       successTimeoutRef.current = null;
       serverOnlyTimerRef.current = 0;
       livenessFramesRef.current = [];
+      phaseProofRef.current = {};
       setChallengeUI({
         text: 'Hadap Lurus',
         subtext: 'Posisikan wajah di dalam bingkai',

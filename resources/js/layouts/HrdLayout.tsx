@@ -163,7 +163,9 @@ export function HrdLayout({ children }: HrdLayoutProps) {
               Menu Utama
             </div>
             {navItems.map((item) => {
-              const active = location.pathname === item.path;
+              const active =
+                location.pathname === item.path ||
+                location.pathname.startsWith(item.path + '/');
               const Icon = item.icon;
               return (
                 <Link

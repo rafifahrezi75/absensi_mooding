@@ -11,6 +11,7 @@ class FaceEmbedding extends Model
 
     protected $fillable = [
         'employee_id',
+        'batch_id',
         'embedding_vector',
         'model_version',
         'model_name',

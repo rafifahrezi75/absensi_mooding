@@ -179,6 +179,8 @@ class KioskController extends Controller
             'confidence_score' => 'nullable|numeric',
             'liveness_passed' => 'required_if:auth_method,face_liveness|boolean',
             'proof_photo_base64' => 'nullable|string',
+            'proof_photo_left_base64' => 'nullable|string',
+            'proof_photo_right_base64' => 'nullable|string',
             'session_id' => 'nullable|string',
             'decision' => 'required_if:auth_method,face_liveness|nullable|in:VERIFIED,RETRY,UNKNOWN,AMBIGUOUS,SPOOF_REJECTED,QUALITY_REJECTED',
             'reject_reason' => 'nullable|string',
@@ -406,25 +408,10 @@ class KioskController extends Controller
             $statusLabel = 'Lembur Selesai Tercatat';
         }
 
-        $photoPath = null;
-        if (! empty($validated['proof_photo_base64'])) {
-            $photoData = $validated['proof_photo_base64'];
-            if (preg_match('/^data:image\/(\w+);base64,/', $photoData, $type)) {
-                $photoData = substr($photoData, strpos($photoData, ',') + 1);
-                $type = strtolower($type[1]);
-                if (! in_array($type, ['jpg', 'jpeg', 'png', 'webp'])) {
-                    $type = 'jpg';
-                }
-            } else {
-                $type = 'jpg';
-            }
-            $photoDecoded = base64_decode($photoData);
-            if ($photoDecoded !== false) {
-                $fileName = 'proofs/proof_'.Str::slug($validated['idempotency_key']).'.'.$type;
-                Storage::disk('public')->put($fileName, $photoDecoded);
-                $photoPath = $fileName;
-            }
-        }
+        $slugKey = Str::slug($validated['idempotency_key']);
+        $photoPath = $this->storeBase64ProofImage($validated['proof_photo_base64'] ?? null, 'proof_'.$slugKey);
+        $photoLeftPath = $this->storeBase64ProofImage($validated['proof_photo_left_base64'] ?? null, 'proof_'.$slugKey.'_left');
+        $photoRightPath = $this->storeBase64ProofImage($validated['proof_photo_right_base64'] ?? null, 'proof_'.$slugKey.'_right');
 
         $event = AttendanceEvent::create([
             'idempotency_key' => $validated['idempotency_key'],
@@ -441,6 +428,8 @@ class KioskController extends Controller
             'auth_method' => $validated['auth_method'],
             'recorded_at' => $recordedTime,
             'proof_photo_path' => $photoPath,
+            'proof_photo_left_path' => $photoLeftPath,
+            'proof_photo_right_path' => $photoRightPath,
             'is_time_suspect' => $validated['is_time_suspect'] ?? false,
             'is_cross_location' => $validated['is_cross_location'] ?? false,
             'confidence_score' => $validated['confidence_score'] ?? null,
@@ -552,6 +541,34 @@ class KioskController extends Controller
             ],
             'event' => $event,
         ]);
+    }
+
+    private function storeBase64ProofImage(?string $base64Data, string $baseName): ?string
+    {
+        if (empty($base64Data)) {
+            return null;
+        }
+
+        $photoData = $base64Data;
+        if (preg_match('/^data:image\/(\w+);base64,/', $photoData, $type)) {
+            $photoData = substr($photoData, strpos($photoData, ',') + 1);
+            $type = strtolower($type[1]);
+            if (! in_array($type, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+                $type = 'jpg';
+            }
+        } else {
+            $type = 'jpg';
+        }
+
+        $decoded = base64_decode($photoData);
+        if ($decoded === false) {
+            return null;
+        }
+
+        $fileName = 'proofs/'.$baseName.'.'.$type;
+        Storage::disk('public')->put($fileName, $decoded);
+
+        return $fileName;
     }
 
     private function resolveKioskDevice(Request $request): ?KioskDevice

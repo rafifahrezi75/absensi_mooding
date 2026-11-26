@@ -10,6 +10,7 @@ import { LoginPage } from '@/pages/Hrd/LoginPage';
 import { DashboardPage } from '@/pages/Hrd/DashboardPage';
 import { EmployeesPage } from '@/pages/Hrd/EmployeesPage';
 import { EmployeeDetailPage } from '@/pages/Hrd/EmployeeDetailPage';
+import { EmployeeFaceEnrollPage } from '@/pages/Hrd/EmployeeFaceEnrollPage';
 import { LogsPage } from '@/pages/Hrd/LogsPage';
 import { LogDetailPage } from '@/pages/Hrd/LogDetailPage';
 import { SettingsPage } from '@/pages/Hrd/SettingsPage';
@@ -26,6 +27,7 @@ function App() {
           <Route path="/hrd/dashboard" element={<DashboardPage />} />
           <Route path="/hrd/employees" element={<EmployeesPage />} />
           <Route path="/hrd/employees/:id" element={<EmployeeDetailPage />} />
+          <Route path="/hrd/employees/:id/face" element={<EmployeeFaceEnrollPage />} />
           <Route path="/hrd/logs" element={<LogsPage />} />
           <Route path="/hrd/logs/:id" element={<LogDetailPage />} />
           <Route path="/hrd/settings" element={<SettingsPage />} />

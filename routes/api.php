@@ -36,6 +36,8 @@ Route::prefix('hrd')->middleware([StartSession::class])->group(function () {
         Route::post('/employees/{id}/upload-profile-photo', [HrdController::class, 'uploadProfilePhoto']);
         Route::delete('/employees/{id}/profile-photo', [HrdController::class, 'deleteProfilePhoto']);
         Route::post('/employees/{id}/enroll-face', [HrdController::class, 'enrollFace']);
+        Route::delete('/employees/{id}/face-embeddings/{embeddingId}', [HrdController::class, 'deleteFaceEmbedding']);
+        Route::delete('/employees/{id}/face-packets', [HrdController::class, 'deleteFacePacket']);
         Route::post('/employees/{id}/reset-pin', [HrdController::class, 'resetPin']);
         Route::get('/logs', [HrdController::class, 'logs']);
         Route::get('/logs/{id}', [HrdController::class, 'showLog']);

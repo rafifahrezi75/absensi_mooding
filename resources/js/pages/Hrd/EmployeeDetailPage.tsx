@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { HrdLayout } from '@/layouts/HrdLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,42 +15,49 @@ import {
   CheckCircle2,
   AlertCircle,
   FileCheck2,
-  UserCheck,
   BrainCircuit,
   ShieldCheck,
   Building2,
   Clock,
-  Calendar,
-  Layers,
   Maximize2,
-  User,
   History,
-  Fingerprint,
   Upload,
   Trash2,
-  Image as ImageIcon,
   ExternalLink,
-  FileText,
+  Layers,
 } from 'lucide-react';
-import {
-  checkPythonEngineHealth,
-} from '@/lib/biometricEngine';
 import axios from 'axios';
 import { toast } from 'sonner';
 
+const POSE_SLOTS = [
+  { key: 'front', label: 'Hadap Lurus', shortLabel: 'Lurus' },
+  { key: 'slight_left', label: 'Tengok Kiri', shortLabel: 'Kiri' },
+  { key: 'slight_right', label: 'Tengok Kanan', shortLabel: 'Kanan' },
+] as const;
+
 export function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
+  const initialTabParam = searchParams.get('tab');
   const [loading, setLoading] = useState<boolean>(true);
   const [data, setData] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'faces' | 'attendances' | 'profile'>('faces');
+  const [activeTab, setActiveTab] = useState<'faces' | 'attendances' | 'profile'>(
+    initialTabParam === 'attendances' || initialTabParam === 'profile' ? initialTabParam : 'faces'
+  );
   const [lightboxImage, setLightboxImage] = useState<{ url: string; title: string } | null>(null);
-
-  const [enrollModalOpen, setEnrollModalOpen] = useState<boolean>(false);
-  const [consentChecked, setConsentChecked] = useState<boolean>(false);
-  const [poseLabel, setPoseLabel] = useState<string>('front');
-  const [enrolling, setEnrolling] = useState<boolean>(false);
+  const [selectedFaceAction, setSelectedFaceAction] = useState<{
+    item: any;
+    packet: any;
+    poseLabelText: string;
+  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<
+    | { type: 'single'; item: any; poseLabelText: string }
+    | { type: 'packet'; packet: any; packetNumber: number }
+    | null
+  >(null);
+  const [deletingFace, setDeletingFace] = useState<boolean>(false);
 
   const [pinModalOpen, setPinModalOpen] = useState<boolean>(false);
   const [newPin, setNewPin] = useState<string>('');
@@ -65,13 +72,16 @@ export function EmployeeDetailPage() {
   const profileCameraRef = useRef<HTMLVideoElement | null>(null);
   const profileStreamRef = useRef<MediaStream | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const enrollStreamRef = useRef<MediaStream | null>(null);
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'faces' || tabParam === 'attendances' || tabParam === 'profile') {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     fetchDetail();
     return () => {
-      stopCamera();
       stopProfileCamera();
     };
   }, [id]);
@@ -197,145 +207,72 @@ export function EmployeeDetailPage() {
     }
   };
 
-  const openEnrollModal = () => {
-    setConsentChecked(false);
-    setPoseLabel('front');
-    setEnrollModalOpen(true);
-
-    setTimeout(() => {
-      startCamera();
-    }, 250);
+  const goToFaceEnrollPage = (mode: 'replace' | 'add' = 'replace') => {
+    if (!id) return;
+    navigate(`/hrd/employees/${id}/face?mode=${mode}`);
   };
 
-  const closeEnrollModal = () => {
-    stopCamera();
-    setEnrollModalOpen(false);
+  const goToUpdateSinglePose = (item: any, packet: any) => {
+    if (!id) return;
+    const params = new URLSearchParams({
+      replace_embedding_id: String(item.id),
+      pose: String(item.pose_label || 'front'),
+      single: '1',
+    });
+    if (item.batch_id) {
+      params.set('batch_id', String(item.batch_id));
+    }
+    if (packet?.embedding_ids?.length) {
+      params.set('packet_ids', packet.embedding_ids.join(','));
+    }
+    setSelectedFaceAction(null);
+    navigate(`/hrd/employees/${id}/face?${params.toString()}`);
   };
 
-  const startCamera = async () => {
-    stopCamera();
+  const goToAddMissingPose = (poseKey: string, packet: any) => {
+    if (!id) return;
+    const params = new URLSearchParams({
+      pose: poseKey,
+      single: '1',
+    });
+    if (packet?.batch_id) {
+      params.set('batch_id', String(packet.batch_id));
+    }
+    if (packet?.embedding_ids?.length) {
+      params.set('packet_ids', packet.embedding_ids.join(','));
+    }
+    navigate(`/hrd/employees/${id}/face?${params.toString()}`);
+  };
+
+  const handleConfirmDeleteFace = async () => {
+    if (!deleteTarget || !data?.employee) return;
+    setDeletingFace(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
-        audio: false,
-      });
-      enrollStreamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play();
-        };
-      }
-    } catch (err: any) {
-      toast.error('Tidak dapat mengakses webcam: ' + (err.message || 'Perangkat kamera sedang digunakan'));
-    }
-  };
-
-  const stopCamera = () => {
-    if (enrollStreamRef.current) {
-      enrollStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
-      enrollStreamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  };
-
-  const handleCaptureAndEnroll = async () => {
-    if (!consentChecked) {
-      toast.error('Wajib mencentang persetujuan pemrosesan biometrik (UU PDP)');
-      return;
-    }
-    if (!videoRef.current || !data?.employee) return;
-
-    setEnrolling(true);
-    try {
-      let photoBase64: string | null = null;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.min(videoRef.current.videoWidth || 640, 640);
-      canvas.height = Math.min(videoRef.current.videoHeight || 480, 480);
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        photoBase64 = canvas.toDataURL('image/jpeg', 0.85);
-      }
-
-      const pyHealth = await checkPythonEngineHealth();
-      if (pyHealth.available && canvas) {
-        const blob = await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9);
+      if (deleteTarget.type === 'single') {
+        const res = await axios.delete(
+          `/api/hrd/employees/${data.employee.id}/face-embeddings/${deleteTarget.item.id}`
+        );
+        if (res.data.success) {
+          toast.success(`Foto pose ${deleteTarget.poseLabelText} berhasil dihapus`);
+        }
+      } else {
+        const res = await axios.delete(`/api/hrd/employees/${data.employee.id}/face-packets`, {
+          data: {
+            batch_id: deleteTarget.packet.batch_id,
+            embedding_ids: deleteTarget.packet.embedding_ids,
+          },
         });
-        if (blob) {
-          const formData = new FormData();
-          formData.append('external_karyawan_id', data.employee.id.toString());
-          formData.append('pose_label', poseLabel);
-          formData.append('images', blob, 'enroll.jpg');
-
-          const pyRes = await fetch('/api/face-engine/api/v1/enroll', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (pyRes.ok) {
-            const enrollData = await pyRes.json();
-            const sampleMeta = enrollData.samples_metadata?.[0] || {};
-            const templates = [
-              {
-                embedding_vector: enrollData.mean_embedding,
-                model_name: enrollData.model_name,
-                model_version: enrollData.model_version,
-                pose_label: poseLabel,
-                photo_base64: photoBase64,
-                quality_score: sampleMeta.quality_score,
-                blur_score: sampleMeta.blur_score,
-                brightness_score: sampleMeta.brightness,
-                pose_yaw: sampleMeta.yaw,
-                pose_pitch: sampleMeta.pitch,
-                pose_roll: sampleMeta.roll,
-              },
-            ];
-            if (enrollData.secondary_mean_embedding) {
-              templates.push({
-                embedding_vector: enrollData.secondary_mean_embedding,
-                model_name: enrollData.secondary_model_name,
-                model_version: enrollData.secondary_model_version,
-                pose_label: poseLabel,
-                photo_base64: null,
-                quality_score: sampleMeta.quality_score,
-                blur_score: sampleMeta.blur_score,
-                brightness_score: sampleMeta.brightness,
-                pose_yaw: sampleMeta.yaw,
-                pose_pitch: sampleMeta.pitch,
-                pose_roll: sampleMeta.roll,
-              });
-            }
-            const res = await axios.post(`/api/hrd/employees/${data.employee.id}/enroll-face`, {
-              templates,
-              consent_given: true,
-            });
-
-            if (res.data.success) {
-              toast.success(`Wajah ${data.employee.nama_karyawan} berhasil didaftarkan (InsightFace 512D)`);
-              closeEnrollModal();
-              fetchDetail();
-              return;
-            }
-          } else {
-            const errJson = await pyRes.json().catch(() => ({}));
-            toast.error(errJson.detail || 'Wajah tidak terdeteksi di mesin InsightFace');
-            setEnrolling(false);
-            return;
-          }
+        if (res.data.success) {
+          toast.success(`Paket foto #${deleteTarget.packetNumber} berhasil dihapus`);
         }
       }
-
-      toast.error('Mesin InsightFace tidak tersedia. Pendaftaran wajah dibatalkan agar format biometrik tetap konsisten.');
+      setDeleteTarget(null);
+      setSelectedFaceAction(null);
+      fetchDetail();
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Gagal menyimpan biometrik wajah');
+      toast.error(err.response?.data?.message || 'Gagal menghapus data foto wajah');
     } finally {
-      setEnrolling(false);
+      setDeletingFace(false);
     }
   };
 
@@ -386,7 +323,12 @@ export function EmployeeDetailPage() {
   }
 
   const profilePhotoUrl = data.employee?.profile_photo_url;
-  const primaryFacePhotoUrl = data.face_embeddings?.find((f: any) => f.photo_url)?.photo_url;
+  const allEmbeddings = data.face_embeddings || [];
+  const facePackets = data.face_packets || [];
+  const primaryEmbeddings = allEmbeddings.filter(
+    (f: any) => Boolean(f.photo_url) || f.dimensions === 512
+  );
+  const visibleFaces = primaryEmbeddings.length > 0 ? primaryEmbeddings : allEmbeddings;
 
   return (
     <HrdLayout>
@@ -402,7 +344,7 @@ export function EmployeeDetailPage() {
             <span>Kembali ke Daftar Karyawan</span>
           </Button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -421,15 +363,15 @@ export function EmployeeDetailPage() {
               variant="outline"
               size="sm"
               className="h-9 text-xs gap-1.5"
-              onClick={openEnrollModal}
+              onClick={goToFaceEnrollPage}
             >
               <ScanFace className="h-4 w-4 text-primary" />
-              <span>{data.employee.has_biometric ? 'Ubah / Tambah Wajah' : 'Daftarkan Wajah'}</span>
+              <span>{data.employee.has_biometric ? 'Ubah Wajah' : 'Daftarkan Wajah'}</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className="h-9 text-xs gap-1.5 text-amber-600 hover:text-amber-700"
+              className="h-9 text-xs gap-1.5 text-amber-700 dark:text-amber-300 hover:text-amber-800"
               onClick={() => {
                 setNewPin('');
                 setPinModalOpen(true);
@@ -505,9 +447,9 @@ export function EmployeeDetailPage() {
 
                 <div className="flex flex-wrap items-center gap-2 pt-1.5">
                   {data.employee.has_biometric ? (
-                    <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-600 border-emerald-500/20 text-xs py-1">
+                    <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20 text-xs py-1">
                       <CheckCircle2 className="h-3.5 w-3.5" />
-                      <span>{data.face_embeddings?.length} Foto Wajah Terdaftar (InsightFace 512D)</span>
+                      <span>{visibleFaces.length} Foto Wajah Terdaftar (InsightFace 512D)</span>
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="gap-1 bg-amber-500/10 text-amber-600 border-amber-500/20 text-xs py-1">
@@ -553,7 +495,7 @@ export function EmployeeDetailPage() {
               }`}
             >
               <ScanFace className="h-4 w-4" />
-              <span>Foto & Data Wajah Terdaftar ({data.face_embeddings?.length || 0})</span>
+              <span>Foto & Data Wajah Terdaftar ({visibleFaces.length})</span>
             </button>
             <button
               type="button"
@@ -593,40 +535,45 @@ export function EmployeeDetailPage() {
                       Foto asli yang disimpan saat karyawan mendaftarkan wajah ke sistem biometrik.
                     </p>
                   </div>
-                  <Button size="sm" onClick={openEnrollModal} className="text-xs gap-1.5 h-8">
+                  <Button size="sm" onClick={goToFaceEnrollPage} className="text-xs gap-1.5 h-8">
                     <Camera className="h-3.5 w-3.5" />
-                    <span>Ambil Foto Wajah Baru</span>
+                    <span>{data.employee.has_biometric ? 'Ubah Wajah (3 Foto)' : 'Daftarkan Wajah (3 Foto)'}</span>
                   </Button>
                 </div>
 
-                {data.face_embeddings?.length === 0 ? (
+                {visibleFaces.length === 0 ? (
                   <div className="p-12 text-center rounded-xl border border-dashed bg-muted/20 flex flex-col items-center justify-center">
                     <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-3">
                       <ScanFace className="h-7 w-7" />
                     </div>
                     <div className="text-sm font-semibold text-foreground">Belum Ada Wajah Terdaftar</div>
                     <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                      Karyawan ini belum memiliki referensi biometrik wajah. Daftarkan foto lurus, kiri, dan kanan melalui kamera.
+                      Karyawan ini belum memiliki referensi biometrik wajah. Daftarkan 3 foto pose (lurus, kiri, kanan) melalui halaman perekaman wajah.
                     </p>
-                    <Button size="sm" className="mt-4 gap-1.5 text-xs" onClick={openEnrollModal}>
+                    <Button size="sm" className="mt-4 gap-1.5 text-xs" onClick={goToFaceEnrollPage}>
                       <Camera className="h-3.5 w-3.5" />
                       <span>Daftarkan Wajah Sekarang</span>
                     </Button>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {data.face_embeddings.map((fb: any, idx: number) => (
+                    {visibleFaces.map((fb: any, idx: number) => (
                       <div key={fb.id || idx} className="rounded-xl border bg-card p-4 shadow-2xs space-y-3.5 hover:shadow-xs transition-shadow">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider bg-primary/10 text-primary border-primary/20">
                               Pose: {fb.pose_label}
                             </Badge>
                             <Badge variant="outline" className="text-[10px] bg-muted text-muted-foreground">
                               {fb.model_version || 'InsightFace 512D'}
                             </Badge>
+                            {sfacePoses.has(fb.pose_label) && (
+                              <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20">
+                                +SFace 128D
+                              </Badge>
+                            )}
                           </div>
-                          <span className="text-[10px] text-muted-foreground font-mono">
+                          <span className="text-[10px] text-muted-foreground font-mono shrink-0">
                             Vektor #{fb.id}
                           </span>
                         </div>
@@ -664,7 +611,7 @@ export function EmployeeDetailPage() {
                               variant="outline"
                               size="sm"
                               className="mt-2.5 text-xs h-7 gap-1"
-                              onClick={openEnrollModal}
+                              onClick={goToFaceEnrollPage}
                             >
                               <Camera className="h-3 w-3" />
                               <span>Perbarui Foto</span>
@@ -923,107 +870,6 @@ export function EmployeeDetailPage() {
               />
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={enrollModalOpen} onOpenChange={closeEnrollModal}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ScanFace className="h-5 w-5 text-primary" />
-              <span>Pendaftaran Wajah: {data.employee.nama_karyawan}</span>
-            </DialogTitle>
-            <DialogDescription>
-              Pilih pose yang akan direkam, arahkan wajah sesuai petunjuk, lalu ambil foto. Tidak perlu berkedip atau membuka mulut.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 pt-2">
-            <div className="relative aspect-4/3 rounded-xl overflow-hidden bg-black border">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover transform -scale-x-100"
-              />
-              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                <div className="w-48 h-60 rounded-[48%] border-2 border-primary/60 border-dashed" />
-                <div className="mt-2.5 rounded-full border border-white/20 bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow-md backdrop-blur-md">
-                  {poseLabel === 'front' && 'Hadap lurus ke kamera'}
-                  {poseLabel === 'slight_left' && 'Tengok sedikit ke kiri'}
-                  {poseLabel === 'slight_right' && 'Tengok sedikit ke kanan'}
-                </div>
-              </div>
-
-              <div className="absolute top-2 left-2 flex items-center gap-1.5">
-                <Badge variant="outline" className="gap-1 bg-black/60 text-white border-white/20 text-[10px]">
-                  <BrainCircuit className="h-3 w-3 text-blue-400" />
-                  <span>InsightFace 512D</span>
-                </Badge>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/20">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-primary" />
-                <div>
-                  <div className="text-xs font-semibold">Perekaman Manual Berpanduan</div>
-                  <div className="text-[10px] text-muted-foreground">Foto diperiksa mesin sesuai pose yang dipilih</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-muted-foreground">Pose Wajah</label>
-              <div className="flex rounded-md border p-0.5 bg-muted/40 text-xs">
-                {[
-                  { value: 'front', label: 'Lurus' },
-                  { value: 'slight_left', label: 'Kiri' },
-                  { value: 'slight_right', label: 'Kanan' },
-                ].map((pose) => (
-                  <button
-                    key={pose.value}
-                    type="button"
-                    onClick={() => setPoseLabel(pose.value)}
-                    className={`flex-1 py-1 rounded-sm font-medium capitalize transition-colors ${
-                      poseLabel === pose.value ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {pose.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-start gap-2.5 p-3 rounded-lg border bg-muted/30">
-              <input
-                type="checkbox"
-                id="consentCheckDetail"
-                checked={consentChecked}
-                onChange={(e) => setConsentChecked(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-              />
-              <label htmlFor="consentCheckDetail" className="text-xs leading-relaxed text-muted-foreground">
-                Karyawan telah memberikan persetujuan eksplisit atas perekaman dan pemrosesan data biometrik wajah untuk keperluan pencatatan kehadiran (Kepatuhan UU PDP No. 27/2022).
-              </label>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <Button type="button" variant="ghost" className="w-1/2" onClick={closeEnrollModal}>
-                Batal
-              </Button>
-              <Button
-                type="button"
-                className="w-1/2 gap-1.5"
-                disabled={enrolling || !consentChecked}
-                onClick={handleCaptureAndEnroll}
-              >
-                <Camera className="h-4 w-4" />
-                <span>{enrolling ? 'Mengekstrak AI...' : 'Ambil & Simpan Wajah'}</span>
-              </Button>
-            </div>
-          </div>
         </DialogContent>
       </Dialog>
 

@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\FaceEmbedding;
 use App\Models\HrdUser;
 use App\Models\SystemSetting;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -589,6 +590,45 @@ class FaceKioskTest extends TestCase
         ));
     }
 
+    public function test_face_engine_proxy_forwards_multiple_frames(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake([
+            config('biometric.engine_url').'/api/v1/recognize' => Http::response([
+                'status' => 'matched',
+                'decision' => 'VERIFIED',
+                'captured_frames' => 7,
+            ]),
+        ]);
+
+        $frames = [];
+        for ($i = 0; $i < 7; $i++) {
+            $frames[] = UploadedFile::fake()->image("frame_{$i}.jpg", 120, 120);
+        }
+
+        $response = $this->post('/api/face-engine/api/v1/recognize', [
+            'frames' => $frames,
+            'company_id' => 1,
+            'challenge_type' => 'HEAD_TURN',
+        ]);
+
+        $response->assertOk()->assertJson([
+            'status' => 'matched',
+            'captured_frames' => 7,
+        ]);
+
+        Http::assertSent(function ($request) {
+            if (! $request->isMultipart()) {
+                return false;
+            }
+            $frameParts = collect($request->data())->filter(
+                fn ($part) => ($part['name'] ?? null) === 'frames'
+            );
+
+            return $frameParts->count() === 7;
+        });
+    }
+
     public function test_kiosk_attendance_tap_ambiguous_decision(): void
     {
         $emp1 = Employee::where('id_karyawan', 'EMP001')->first();
@@ -829,5 +869,104 @@ class FaceKioskTest extends TestCase
             'status' => 'invalid_attestation',
             'reject_reason' => 'ATTESTATION_TOKEN_REPLAYED',
         ]);
+    }
+
+    public function test_hrd_enroll_three_poses_with_replace_existing_deactivates_previous_templates(): void
+    {
+        Storage::fake('public');
+        Http::preventStrayRequests();
+        Http::fake([
+            config('biometric.engine_url').'/api/v1/cache/sync' => Http::response([
+                'status' => 'ok',
+                'synced_employees' => 1,
+            ]),
+        ]);
+
+        $uniqueExtId = random_int(900000, 999999);
+        $employee = Employee::create([
+            'company_id' => 1,
+            'external_karyawan_id' => $uniqueExtId,
+            'id_karyawan' => 'EMPTEST'.$uniqueExtId,
+            'nama_karyawan' => 'Karyawan Uji Tiga Foto',
+            'status' => 'aktif',
+        ]);
+
+        try {
+            $oldEmbedding = FaceEmbedding::create([
+                'employee_id' => $employee->id,
+                'embedding_vector' => json_encode(array_fill(0, 512, 0.02)),
+                'model_name' => 'buffalo_s',
+                'model_version' => 'arcface_r50_v1',
+                'pose_label' => 'front',
+                'is_active' => true,
+            ]);
+
+            $fakePhotoBase64 = 'data:image/jpeg;base64,'.base64_encode('fake-jpg-content');
+            $poses = ['front', 'slight_left', 'slight_right'];
+            $templates = [];
+
+            foreach ($poses as $pose) {
+                $templates[] = [
+                    'embedding_vector' => array_fill(0, 512, 0.09),
+                    'model_name' => 'buffalo_s',
+                    'model_version' => 'arcface_r50_v1',
+                    'pose_label' => $pose,
+                    'photo_base64' => $fakePhotoBase64,
+                    'quality_score' => 95.0,
+                    'blur_score' => 130.0,
+                    'brightness_score' => 110.0,
+                    'pose_yaw' => $pose === 'slight_left' ? 18.0 : ($pose === 'slight_right' ? -18.0 : 0.5),
+                    'pose_pitch' => 0.0,
+                    'pose_roll' => 0.0,
+                ];
+                $templates[] = [
+                    'embedding_vector' => array_fill(0, 128, 0.08),
+                    'model_name' => 'sface',
+                    'model_version' => 'opencv_sface_2021dec',
+                    'pose_label' => $pose,
+                    'photo_base64' => null,
+                    'quality_score' => 95.0,
+                    'blur_score' => 130.0,
+                    'brightness_score' => 110.0,
+                    'pose_yaw' => $pose === 'slight_left' ? 18.0 : ($pose === 'slight_right' ? -18.0 : 0.5),
+                    'pose_pitch' => 0.0,
+                    'pose_roll' => 0.0,
+                ];
+            }
+
+            $headers = $this->authenticateHrd();
+            $response = $this->postJson('/api/hrd/employees/'.$employee->id.'/enroll-face', [
+                'consent_given' => true,
+                'replace_existing' => true,
+                'templates' => $templates,
+            ], $headers);
+
+            $response->assertStatus(200)
+                ->assertJson([
+                    'success' => true,
+                    'enrolled_count' => 6,
+                ]);
+
+            $this->assertFalse((bool) $oldEmbedding->fresh()->is_active);
+            $this->assertSame(
+                6,
+                FaceEmbedding::where('employee_id', $employee->id)->where('is_active', true)->count()
+            );
+
+            $detailResponse = $this->getJson('/api/hrd/employees/'.$employee->id, $headers);
+            $detailResponse->assertStatus(200);
+            $this->assertCount(6, $detailResponse->json('face_embeddings'));
+
+            Http::assertSent(function ($request) use ($employee) {
+                $body = $request->data();
+
+                return str_ends_with($request->url(), '/api/v1/cache/sync')
+                    && ($body['employees'][0]['employee_id'] ?? null) === $employee->id
+                    && count($body['employees'][0]['embeddings'] ?? []) === 6;
+            });
+        } finally {
+            FaceEmbedding::where('employee_id', $employee->id)->delete();
+            $employee->delete();
+        }
     }
 }

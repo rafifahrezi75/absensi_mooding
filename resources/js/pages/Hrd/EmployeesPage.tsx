@@ -1,27 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { HrdLayout } from '@/layouts/HrdLayout';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Search,
-  ScanFace,
-  KeyRound,
   RefreshCw,
-  Camera,
   CheckCircle2,
   AlertCircle,
   FileCheck2,
-  BrainCircuit,
-  ShieldCheck,
   Eye,
 } from 'lucide-react';
-import {
-  checkPythonEngineHealth,
-} from '@/lib/biometricEngine';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -33,28 +24,10 @@ export function EmployeesPage() {
   const [filterBio, setFilterBio] = useState<string>('all');
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
-
-  const [enrollModalOpen, setEnrollModalOpen] = useState<boolean>(false);
-  const [selectedEmployee, setSelectedEmployee] = useState<any>(null);
-  const [consentChecked, setConsentChecked] = useState<boolean>(false);
-  const [poseLabel, setPoseLabel] = useState<string>('front');
-  const [enrolling, setEnrolling] = useState<boolean>(false);
-
-  const [pinModalOpen, setPinModalOpen] = useState<boolean>(false);
-  const [newPin, setNewPin] = useState<string>('');
-  const [savingPin, setSavingPin] = useState<boolean>(false);
-
   const [syncingMaster, setSyncingMaster] = useState<boolean>(false);
-
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const enrollStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     fetchEmployees();
-
-    return () => {
-      stopCamera();
-    };
   }, [page, filterBio]);
 
   const fetchEmployees = async () => {
@@ -67,7 +40,7 @@ export function EmployeesPage() {
       const res = await axios.get('/api/hrd/employees', { params });
       setEmployees(res.data.data || []);
       setTotalPages(res.data.last_page || 1);
-    } catch (err) {
+    } catch {
       toast.error('Gagal mengambil daftar karyawan');
     } finally {
       setLoading(false);
@@ -86,181 +59,10 @@ export function EmployeesPage() {
       const res = await axios.post('/api/hrd/sync-master');
       toast.success(res.data.message || 'Master data berhasil disinkronkan');
       fetchEmployees();
-    } catch (err) {
+    } catch {
       toast.error('Gagal sinkron master data');
     } finally {
       setSyncingMaster(false);
-    }
-  };
-
-  const openEnrollModal = (emp: any) => {
-    setSelectedEmployee(emp);
-    setConsentChecked(false);
-    setPoseLabel('front');
-    setEnrollModalOpen(true);
-
-    setTimeout(() => {
-      startCamera();
-    }, 250);
-  };
-
-  const closeEnrollModal = () => {
-    stopCamera();
-    setEnrollModalOpen(false);
-    setSelectedEmployee(null);
-  };
-
-  const startCamera = async () => {
-    stopCamera();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
-        audio: false,
-      });
-      enrollStreamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play();
-        };
-      }
-    } catch (err: any) {
-      toast.error('Tidak dapat mengakses webcam: ' + (err.message || 'Perangkat kamera sedang digunakan'));
-    }
-  };
-
-  const stopCamera = () => {
-    if (enrollStreamRef.current) {
-      enrollStreamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
-      enrollStreamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  };
-
-  const handleCaptureAndEnroll = async () => {
-    if (!consentChecked) {
-      toast.error('Wajib mencentang persetujuan pemrosesan biometrik (UU PDP)');
-      return;
-    }
-    if (!videoRef.current || !selectedEmployee) return;
-
-    setEnrolling(true);
-    try {
-      let photoBase64: string | null = null;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.min(videoRef.current.videoWidth || 640, 640);
-      canvas.height = Math.min(videoRef.current.videoHeight || 480, 480);
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        photoBase64 = canvas.toDataURL('image/jpeg', 0.85);
-      }
-
-      const pyHealth = await checkPythonEngineHealth();
-      if (pyHealth.available && canvas) {
-        const blob = await new Promise<Blob | null>((resolve) => {
-          canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9);
-        });
-        if (blob) {
-          const formData = new FormData();
-          formData.append('external_karyawan_id', selectedEmployee.id.toString());
-          formData.append('pose_label', poseLabel);
-          formData.append('images', blob, 'enroll.jpg');
-
-          const pyRes = await fetch('/api/face-engine/api/v1/enroll', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (pyRes.ok) {
-            const enrollData = await pyRes.json();
-            const sampleMeta = enrollData.samples_metadata?.[0] || {};
-            const templates = [
-              {
-                embedding_vector: enrollData.mean_embedding,
-                model_name: enrollData.model_name,
-                model_version: enrollData.model_version,
-                pose_label: poseLabel,
-                photo_base64: photoBase64,
-                quality_score: sampleMeta.quality_score,
-                blur_score: sampleMeta.blur_score,
-                brightness_score: sampleMeta.brightness,
-                pose_yaw: sampleMeta.yaw,
-                pose_pitch: sampleMeta.pitch,
-                pose_roll: sampleMeta.roll,
-              },
-            ];
-            if (enrollData.secondary_mean_embedding) {
-              templates.push({
-                embedding_vector: enrollData.secondary_mean_embedding,
-                model_name: enrollData.secondary_model_name,
-                model_version: enrollData.secondary_model_version,
-                pose_label: poseLabel,
-                photo_base64: null,
-                quality_score: sampleMeta.quality_score,
-                blur_score: sampleMeta.blur_score,
-                brightness_score: sampleMeta.brightness,
-                pose_yaw: sampleMeta.yaw,
-                pose_pitch: sampleMeta.pitch,
-                pose_roll: sampleMeta.roll,
-              });
-            }
-            const res = await axios.post(`/api/hrd/employees/${selectedEmployee.id}/enroll-face`, {
-              templates,
-              consent_given: true,
-            });
-
-            if (res.data.success) {
-              toast.success(`Wajah ${selectedEmployee.nama_karyawan} berhasil didaftarkan (InsightFace 512D)`);
-              closeEnrollModal();
-              fetchEmployees();
-              return;
-            }
-          } else {
-            const errJson = await pyRes.json().catch(() => ({}));
-            toast.error(errJson.detail || 'Wajah tidak terdeteksi di mesin InsightFace');
-            setEnrolling(false);
-            return;
-          }
-        }
-      }
-
-      toast.error('Mesin InsightFace tidak tersedia. Pendaftaran wajah dibatalkan agar format biometrik tetap konsisten.');
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Gagal menyimpan biometrik wajah');
-    } finally {
-      setEnrolling(false);
-    }
-  };
-
-  const openPinModal = (emp: any) => {
-    setSelectedEmployee(emp);
-    setNewPin('');
-    setPinModalOpen(true);
-  };
-
-  const handleSavePin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedEmployee || !newPin) return;
-
-    setSavingPin(true);
-    try {
-      const res = await axios.post(`/api/hrd/employees/${selectedEmployee.id}/reset-pin`, {
-        pin: newPin,
-      });
-      if (res.data.success) {
-        toast.success(`PIN ${selectedEmployee.nama_karyawan} berhasil diubah`);
-        setPinModalOpen(false);
-        setNewPin('');
-      }
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Gagal mengubah PIN');
-    } finally {
-      setSavingPin(false);
     }
   };
 
@@ -271,7 +73,7 @@ export function EmployeesPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Karyawan & Biometrik</h1>
             <p className="text-xs text-muted-foreground">
-              Manajemen profil karyawan, pemantauan foto biometrik terdaftar, dan audit log presensi kiosk.
+              Kelola profil, ubah wajah, dan atur PIN darurat melalui halaman detail karyawan.
             </p>
           </div>
 
@@ -412,7 +214,7 @@ export function EmployeesPage() {
                         </td>
                         <td className="py-3 px-4">
                           {emp.has_biometric ? (
-                            <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                            <Badge variant="outline" className="gap-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20">
                               <CheckCircle2 className="h-3 w-3" />
                               <span>{emp.embeddings_count} Vektor ResNet</span>
                             </Badge>
@@ -425,7 +227,7 @@ export function EmployeesPage() {
                         </td>
                         <td className="py-3 px-4 text-muted-foreground">
                           {emp.biometric_consent_at ? (
-                            <div className="flex items-center gap-1 font-mono text-[11px] text-emerald-600 dark:text-emerald-400">
+                            <div className="flex items-center gap-1 font-mono text-[11px] text-emerald-700 dark:text-emerald-300">
                               <FileCheck2 className="h-3.5 w-3.5" />
                               <span>{new Date(emp.biometric_consent_at).toLocaleDateString('id-ID')}</span>
                             </div>
@@ -434,35 +236,15 @@ export function EmployeesPage() {
                           )}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                          <div className="flex items-center justify-end">
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-8 gap-1 text-xs text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950/30"
+                              className="h-9 px-3 gap-1.5 text-xs"
                               onClick={() => navigate(`/hrd/employees/${emp.id}`)}
                             >
-                              <Eye className="h-3.5 w-3.5" />
+                              <Eye className="h-3.5 w-3.5 text-primary" />
                               <span>Detail</span>
-                            </Button>
-
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 gap-1 text-xs"
-                              onClick={() => openEnrollModal(emp)}
-                            >
-                              <ScanFace className="h-3.5 w-3.5 text-primary" />
-                              <span>{emp.has_biometric ? 'Ubah Wajah' : 'Daftar Wajah'}</span>
-                            </Button>
-
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 gap-1 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
-                              onClick={() => openPinModal(emp)}
-                            >
-                              <KeyRound className="h-3.5 w-3.5" />
-                              <span>PIN</span>
                             </Button>
                           </div>
                         </td>
@@ -499,147 +281,6 @@ export function EmployeesPage() {
           </CardContent>
         </Card>
       </div>
-
-      <Dialog open={enrollModalOpen} onOpenChange={closeEnrollModal}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ScanFace className="h-5 w-5 text-primary" />
-              <span>Pendaftaran Wajah: {selectedEmployee?.nama_karyawan}</span>
-            </DialogTitle>
-            <DialogDescription>
-              Pilih pose yang akan direkam, arahkan wajah sesuai petunjuk, lalu ambil foto. Tidak perlu berkedip atau membuka mulut.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 pt-2">
-            <div className="relative aspect-4/3 rounded-xl overflow-hidden bg-black border">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover transform -scale-x-100"
-              />
-              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                <div className="w-48 h-60 rounded-[48%] border-2 border-primary/60 border-dashed" />
-                <div className="mt-2.5 rounded-full border border-white/20 bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow-md backdrop-blur-md">
-                  {poseLabel === 'front' && 'Hadap lurus ke kamera'}
-                  {poseLabel === 'slight_left' && 'Tengok sedikit ke kiri'}
-                  {poseLabel === 'slight_right' && 'Tengok sedikit ke kanan'}
-                </div>
-              </div>
-
-              <div className="absolute top-2 left-2 flex items-center gap-1.5">
-                <Badge variant="outline" className="gap-1 bg-black/60 text-white border-white/20 text-[10px]">
-                  <BrainCircuit className="h-3 w-3 text-blue-400" />
-                  <span>InsightFace 512D</span>
-                </Badge>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/20">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-primary" />
-                <div>
-                  <div className="text-xs font-semibold">Perekaman Manual Berpanduan</div>
-                  <div className="text-[10px] text-muted-foreground">Foto diperiksa mesin sesuai pose yang dipilih</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-muted-foreground">Pose Wajah</label>
-              <div className="flex rounded-md border p-0.5 bg-muted/40 text-xs">
-                {[
-                  { value: 'front', label: 'Lurus' },
-                  { value: 'slight_left', label: 'Kiri' },
-                  { value: 'slight_right', label: 'Kanan' },
-                ].map((pose) => (
-                  <button
-                    key={pose.value}
-                    type="button"
-                    onClick={() => setPoseLabel(pose.value)}
-                    className={`flex-1 py-1 rounded-sm font-medium capitalize transition-colors ${
-                      poseLabel === pose.value ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {pose.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-start gap-2.5 p-3 rounded-lg border bg-muted/30">
-              <input
-                type="checkbox"
-                id="consentCheck"
-                checked={consentChecked}
-                onChange={(e) => setConsentChecked(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
-              />
-              <label htmlFor="consentCheck" className="text-xs leading-relaxed text-muted-foreground">
-                Karyawan telah memberikan persetujuan eksplisit atas perekaman dan pemrosesan data biometrik wajah untuk keperluan pencatatan kehadiran (Kepatuhan UU PDP No. 27/2022).
-              </label>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <Button type="button" variant="ghost" className="w-1/2" onClick={closeEnrollModal}>
-                Batal
-              </Button>
-              <Button
-                type="button"
-                className="w-1/2 gap-1.5"
-                disabled={enrolling || !consentChecked}
-                onClick={handleCaptureAndEnroll}
-              >
-                <Camera className="h-4 w-4" />
-                <span>{enrolling ? 'Mengekstrak AI...' : 'Ambil & Simpan Wajah'}</span>
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={pinModalOpen} onOpenChange={setPinModalOpen}>
-        <DialogContent className="sm:max-w-xs">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <KeyRound className="h-5 w-5 text-amber-500" />
-              <span>Atur PIN Darurat</span>
-            </DialogTitle>
-            <DialogDescription>
-              Atur 4–6 digit angka untuk jalur darurat Kiosk milik {selectedEmployee?.nama_karyawan}.
-            </DialogDescription>
-          </DialogHeader>
-
-          <form onSubmit={handleSavePin} className="space-y-4 pt-2">
-            <Input
-              type="password"
-              maxLength={6}
-              placeholder="Contoh: 1234"
-              value={newPin}
-              onChange={(e) => setNewPin(e.target.value)}
-              className="text-center font-mono text-2xl tracking-widest h-12"
-              autoFocus
-            />
-
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-1/2"
-                onClick={() => setPinModalOpen(false)}
-              >
-                Batal
-              </Button>
-              <Button type="submit" className="w-1/2" disabled={savingPin || newPin.length < 4}>
-                {savingPin ? 'Menyimpan...' : 'Simpan'}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
     </HrdLayout>
   );
 }

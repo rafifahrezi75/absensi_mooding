@@ -433,8 +433,9 @@ async def recognize_face(
     best_recognition_quality_metrics = None
     quality_errors = []
     quality_approved_frame_count = 0
+    detected_frame_yaws = []
 
-    for frame in frames_bgr:
+    for idx, frame in enumerate(frames_bgr):
         face_status, face = recognizer.extract_face(frame)
         if face_status == "multiple_faces":
             elapsed = round((time.time() - start_time) * 1000, 2)
@@ -452,6 +453,9 @@ async def recognize_face(
         if face_status != "ok" or face is None:
             quality_errors.append("FACE_NOT_DETECTED")
             continue
+
+        if hasattr(face, "pose") and face.pose is not None and len(face.pose) >= 3:
+            detected_frame_yaws.append((idx, float(face.pose[1])))
 
         is_valid, q_code, q_msg, q_metrics = check_frame_quality(frame, face)
         last_quality_metrics = q_metrics
@@ -622,6 +626,24 @@ async def recognize_face(
             hashlib.sha256
         ).hexdigest()
 
+    proof_frame_indices = None
+    if detected_frame_yaws:
+        front_idx = min(detected_frame_yaws, key=lambda item: abs(item[1]))[0]
+        other_yaws = [item for item in detected_frame_yaws if item[0] != front_idx]
+        if other_yaws:
+            left_idx = max(other_yaws, key=lambda item: item[1])[0]
+            right_pool = [item for item in other_yaws if item[0] != left_idx] or other_yaws
+            right_idx = min(right_pool, key=lambda item: item[1])[0]
+        else:
+            left_idx = front_idx
+            right_idx = front_idx
+
+        proof_frame_indices = {
+            "front": front_idx,
+            "slight_left": left_idx,
+            "slight_right": right_idx,
+        }
+
     return RecognizeResponse(
         status=final_match["status"],
         decision=final_match["decision"],
@@ -654,5 +676,6 @@ async def recognize_face(
         collision_risk_level=final_match.get("collision_risk_level", "LOW"),
         gallery_version=final_match.get("gallery_version"),
         attestation_token=attestation_token,
-        attestation_timestamp=attestation_ts
+        attestation_timestamp=attestation_ts,
+        proof_frame_indices=proof_frame_indices
     )

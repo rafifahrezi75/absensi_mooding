@@ -144,7 +144,7 @@ def verify_active_challenge(
 
     elif c_type in ["HEAD_TURN", "TURN_LEFT_OR_RIGHT"]:
         if len(nose_x_positions) >= 2:
-            delta_x = abs(nose_x_positions[-1] - nose_x_positions[0])
+            delta_x = max(nose_x_positions) - min(nose_x_positions)
             if delta_x > 0.02:
                 return True, "head_turn_verified"
         return False, "head_turn_failed"

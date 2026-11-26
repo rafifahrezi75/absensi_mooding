@@ -127,6 +127,7 @@ class RecognizeResponse(BaseModel):
     gallery_version: Optional[str] = None
     attestation_token: Optional[str] = None
     attestation_timestamp: Optional[int] = None
+    proof_frame_indices: Optional[Dict[str, int]] = None
     message: Optional[str] = None
 
 class ClaimedVerifyResponse(BaseModel):

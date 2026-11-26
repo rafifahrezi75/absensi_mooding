@@ -840,7 +840,7 @@ export async function recognizeFaceWithPython(
 ): Promise<any> {
   const formData = new FormData();
   frames.forEach((blob, idx) => {
-    formData.append('frames', blob, `frame_${idx}.jpg`);
+    formData.append('frames[]', blob, `frame_${idx}.jpg`);
   });
   formData.append('company_id', companyId.toString());
   formData.append('allowed_company_ids', JSON.stringify(allowedCompanyIds));
