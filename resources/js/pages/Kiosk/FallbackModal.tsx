@@ -72,7 +72,7 @@ export function FallbackModal({
       work_date: workDate,
       attendance_type: selectedType,
       recorded_at: recordedAt,
-      proof_photo_base64: photoBase64,
+      proof_photo_base64: photoBase64 || null,
     };
 
     if (!navigator.onLine) {
@@ -145,7 +145,7 @@ export function FallbackModal({
             <span>Jalur Darurat (ID & PIN)</span>
           </DialogTitle>
           <DialogDescription>
-            Gunakan jalur ini bila scan wajah gagal atau ruangan berpencahayaan rendah. Kamera otomatis mengambil foto bukti kehadiran.
+            Gunakan jalur ini bila scan wajah gagal atau ruangan berpencahayaan rendah. Kamera dinonaktifkan selama memasukkan PIN.
           </DialogDescription>
         </DialogHeader>
 
@@ -191,8 +191,8 @@ export function FallbackModal({
           )}
 
           <div className="rounded-lg border bg-muted/40 p-2 text-xs text-muted-foreground flex items-center gap-2">
-            <Camera className="h-4 w-4 text-primary shrink-0" />
-            <span>Foto bukti kehadiran otomatis diambil saat tombol ditekan.</span>
+            <KeyRound className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span>Kamera dimatikan selama memasukkan ID & PIN demi privasi dan keamanan Anda.</span>
           </div>
 
           <div className="grid grid-cols-3 gap-1.5 pt-1">

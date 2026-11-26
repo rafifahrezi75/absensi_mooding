@@ -467,7 +467,7 @@ class KioskController extends Controller
             'work_date' => 'required|date_format:Y-m-d',
             'attendance_type' => 'required|in:clock_in,clock_out,break_start,break_end,overtime_start,overtime_end',
             'recorded_at' => 'required|string',
-            'proof_photo_base64' => 'required|string',
+            'proof_photo_base64' => 'nullable|string',
         ]);
 
         $employee = Employee::where('id_karyawan', $validated['id_karyawan'])->first();
@@ -492,16 +492,21 @@ class KioskController extends Controller
             ], 401);
         }
 
-        $photoData = $validated['proof_photo_base64'];
-        if (preg_match('/^data:image\/(\w+);base64,/', $photoData, $type)) {
-            $photoData = substr($photoData, strpos($photoData, ',') + 1);
-            $type = strtolower($type[1]);
-        } else {
-            $type = 'jpg';
+        $photoData = $validated['proof_photo_base64'] ?? null;
+        $fileName = null;
+        if (! empty($photoData)) {
+            if (preg_match('/^data:image\/(\w+);base64,/', $photoData, $type)) {
+                $photoData = substr($photoData, strpos($photoData, ',') + 1);
+                $type = strtolower($type[1]);
+            } else {
+                $type = 'jpg';
+            }
+            $photoDecoded = base64_decode($photoData);
+            if ($photoDecoded !== false) {
+                $fileName = 'proofs/proof_'.Str::slug($validated['idempotency_key']).'.'.$type;
+                Storage::disk('public')->put($fileName, $photoDecoded);
+            }
         }
-        $photoDecoded = base64_decode($photoData);
-        $fileName = 'proofs/proof_'.Str::slug($validated['idempotency_key']).'.'.$type;
-        Storage::disk('public')->put($fileName, $photoDecoded);
 
         $recordedTime = Carbon::parse($validated['recorded_at'])->setTimezone(config('app.timezone'));
         $statusLabel = 'Jalur Darurat (PIN) — '.ucfirst(str_replace('_', ' ', $validated['attendance_type'])).' '.$recordedTime->format('H:i').' WIB';

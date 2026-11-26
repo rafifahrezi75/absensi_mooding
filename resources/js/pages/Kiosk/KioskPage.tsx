@@ -121,7 +121,8 @@ export function KioskPage() {
         !cameraActive ||
         !videoRef.current ||
         !overlayCanvasRef.current ||
-        isDrawingFaceBoxRef.current
+        isDrawingFaceBoxRef.current ||
+        isFallbackOpen
       ) {
         return;
       }
@@ -150,7 +151,7 @@ export function KioskPage() {
     }, 300);
 
     return () => window.clearInterval(faceBoxInterval);
-  }, [cameraActive]);
+  }, [cameraActive, isFallbackOpen]);
 
   const autoSelectButton = (buttons: any[]) => {
     if (!buttons || buttons.length === 0) return;
@@ -282,7 +283,7 @@ export function KioskPage() {
     }
 
     if (openFallback) {
-      setIsFallbackOpen(true);
+      openFallbackModal();
     }
 
     errorCooldownIntervalRef.current = window.setInterval(() => {
@@ -382,7 +383,7 @@ export function KioskPage() {
           setFailedCount((prev) => {
             const next = prev + 1;
             if (next >= (config?.settings?.max_failed_scans || 3)) {
-              setIsFallbackOpen(true);
+              openFallbackModal();
               return 0;
             }
             return next;
@@ -409,7 +410,8 @@ export function KioskPage() {
         !videoRef.current ||
         !cameraActive ||
         scanLockRef.current ||
-        isDetectingRef.current
+        isDetectingRef.current ||
+        isFallbackOpen
       ) {
         return;
       }
@@ -491,7 +493,7 @@ export function KioskPage() {
     }, 100);
 
     return () => clearInterval(loopInterval);
-  }, [cameraActive, cachedEmployees, config, selectedType, pythonEngineActive]);
+  }, [cameraActive, cachedEmployees, config, selectedType, pythonEngineActive, isFallbackOpen]);
 
   const generateUuid = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -655,8 +657,31 @@ export function KioskPage() {
     }, 3500);
   };
 
-  const handleManualFallbackClick = () => {
+  const openFallbackModal = () => {
+    stopCamera();
+    serverOnlyTimerRef.current = 0;
+    livenessFramesRef.current = [];
+    phaseProofRef.current = {};
+    if (overlayCanvasRef.current) {
+      const ctx = overlayCanvasRef.current.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height);
+    }
     setIsFallbackOpen(true);
+  };
+
+  const closeFallbackModal = () => {
+    setIsFallbackOpen(false);
+    startCamera();
+  };
+
+  const handleFallbackSuccess = (resultData: any) => {
+    setIsFallbackOpen(false);
+    showSuccessResult(resultData);
+    startCamera();
+  };
+
+  const handleManualFallbackClick = () => {
+    openFallbackModal();
   };
 
   const defaultButtons = [
@@ -908,12 +933,12 @@ export function KioskPage() {
 
       <FallbackModal
         isOpen={isFallbackOpen}
-        onClose={() => setIsFallbackOpen(false)}
+        onClose={closeFallbackModal}
         videoRef={videoRef}
         selectedType={selectedType}
         locationInfo={config?.location}
         deviceInfo={config?.device}
-        onSuccess={showSuccessResult}
+        onSuccess={handleFallbackSuccess}
       />
     </KioskLayout>
   );

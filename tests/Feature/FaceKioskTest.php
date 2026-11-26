@@ -199,6 +199,27 @@ class FaceKioskTest extends TestCase
             ]);
     }
 
+    public function test_kiosk_fallback_pin_tap_without_photo(): void
+    {
+        $idempotencyKey = 'test-fallback-nophoto-'.uniqid();
+        $workDate = date('Y-m-d');
+
+        $response = $this->postJson('/api/kiosk/fallback-tap', [
+            'idempotency_key' => $idempotencyKey,
+            'id_karyawan' => 'EMP001',
+            'pin' => '1234',
+            'work_date' => $workDate,
+            'attendance_type' => 'break_start',
+            'recorded_at' => date('c'),
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'status' => 'synced',
+            ]);
+    }
+
     public function test_hrd_login_and_dashboard(): void
     {
         $unauthRes = $this->getJson('/api/hrd/dashboard');
