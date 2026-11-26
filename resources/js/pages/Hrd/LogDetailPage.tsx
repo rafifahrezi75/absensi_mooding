@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { HrdLayout } from '@/layouts/HrdLayout';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -18,13 +19,9 @@ import {
   Copy,
   MapPin,
   Monitor,
-  Briefcase,
-  Calendar,
   UserCheck,
-  Sparkles,
   Maximize2,
   Check,
-  FileText,
   Building,
 } from 'lucide-react';
 import axios from 'axios';
@@ -32,12 +29,23 @@ import { toast } from 'sonner';
 
 export function LogDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [retrying, setRetrying] = useState<boolean>(false);
   const [copiedKey, setCopiedKey] = useState<boolean>(false);
+  const [zoomPhoto, setZoomPhoto] = useState<{ url: string; title: string } | null>(null);
+
+  const isFromEmployee = searchParams.get('from') === 'employee';
+  const queryEmployeeId = searchParams.get('employee_id');
+  const resolvedEmployeeId = event?.employee_id || queryEmployeeId;
+  const backUrl =
+    isFromEmployee && resolvedEmployeeId
+      ? `/hrd/employees/${resolvedEmployeeId}?tab=attendances`
+      : '/hrd/logs';
+  const backButtonLabel = isFromEmployee ? 'Kembali ke Detail Karyawan' : 'Kembali ke Riwayat Log';
 
   useEffect(() => {
     fetchDetail();
@@ -137,8 +145,8 @@ export function LogDetailPage() {
           <p className="text-sm text-muted-foreground">
             Data absensi dengan ID tersebut tidak ditemukan pada database kiosk.
           </p>
-          <Button onClick={() => navigate('/hrd/logs')} variant="outline">
-            Kembali ke Riwayat Log
+          <Button onClick={() => navigate(backUrl)} variant="outline">
+            {backButtonLabel}
           </Button>
         </div>
       </HrdLayout>
@@ -156,11 +164,11 @@ export function LogDetailPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => navigate('/hrd/logs')}
+              onClick={() => navigate(backUrl)}
               className="h-9 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="h-4 w-4" />
-              <span>Kembali</span>
+              <span>{backButtonLabel}</span>
             </Button>
             <div>
               <div className="flex items-center gap-2">
@@ -229,21 +237,107 @@ export function LogDetailPage() {
                   )}
                 </div>
               </CardHeader>
-              <CardContent className="p-4 space-y-3">
-                <div className="relative aspect-4/3 rounded-xl overflow-hidden border bg-black flex items-center justify-center">
-                  {event.proof_photo_url ? (
-                    <img
-                      src={event.proof_photo_url}
-                      alt="Foto Bukti Absensi"
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center text-muted-foreground p-6 text-center space-y-2">
-                      <ImageIcon className="h-10 w-10 stroke-1 text-muted-foreground/40" />
-                      <div className="text-xs">Foto bukti fisik tidak tersedia pada record ini</div>
+              <CardContent className="p-4 space-y-4">
+                {event.auth_method === 'face_liveness' ? (
+                  <div className="space-y-3">
+                    <div className="relative aspect-4/3 rounded-xl overflow-hidden border bg-black flex items-center justify-center group">
+                      {event.proof_photo_url ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setZoomPhoto({
+                              url: event.proof_photo_url,
+                              title: `Foto Hadap Lurus - ${event.nama_karyawan}`,
+                            })
+                          }
+                          className="w-full h-full relative focus-visible:outline-2 focus-visible:outline-ring"
+                        >
+                          <img
+                            src={event.proof_photo_url}
+                            alt="Foto Hadap Lurus"
+                            className="w-full h-full object-contain"
+                          />
+                          <div className="absolute top-2.5 left-2.5 rounded-full bg-black/75 text-white text-[11px] font-semibold px-2.5 py-1">
+                            1. Hadap Lurus
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center text-muted-foreground p-6 text-center space-y-2">
+                          <ImageIcon className="h-10 w-10 stroke-1 text-muted-foreground/40" />
+                          <div className="text-xs">Foto bukti fisik tidak tersedia pada record ini</div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+
+                    <div className="grid grid-cols-3 gap-2.5">
+                      {[
+                        {
+                          key: 'front',
+                          title: 'Lurus',
+                          fullTitle: 'Foto Hadap Lurus',
+                          url: event.proof_photo_url,
+                        },
+                        {
+                          key: 'left',
+                          title: 'Kiri',
+                          fullTitle: 'Foto Tengok Kiri',
+                          url: event.proof_photo_left_url,
+                        },
+                        {
+                          key: 'right',
+                          title: 'Kanan',
+                          fullTitle: 'Foto Tengok Kanan',
+                          url: event.proof_photo_right_url,
+                        },
+                      ].map((shot) => (
+                        <div key={shot.key} className="space-y-1">
+                          {shot.url ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setZoomPhoto({
+                                  url: shot.url,
+                                  title: `${shot.fullTitle} - ${event.nama_karyawan}`,
+                                })
+                              }
+                              className="relative aspect-4/3 w-full rounded-lg overflow-hidden border bg-black group focus-visible:outline-2 focus-visible:outline-ring"
+                            >
+                              <img
+                                src={shot.url}
+                                alt={shot.fullTitle}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              />
+                              <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] font-semibold py-0.5 px-1.5 flex items-center justify-between">
+                                <span>{shot.title}</span>
+                                <Maximize2 className="h-2.5 w-2.5" />
+                              </div>
+                            </button>
+                          ) : (
+                            <div className="aspect-4/3 rounded-lg border border-dashed bg-muted/30 flex flex-col items-center justify-center p-2 text-center">
+                              <ImageIcon className="h-4 w-4 text-muted-foreground/50 mb-1" />
+                              <span className="text-[10px] text-muted-foreground">{shot.title}: N/A</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="relative aspect-4/3 rounded-xl overflow-hidden border bg-black flex items-center justify-center">
+                    {event.proof_photo_url ? (
+                      <img
+                        src={event.proof_photo_url}
+                        alt="Foto Bukti Absensi"
+                        className="w-full h-full object-contain"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center text-muted-foreground p-6 text-center space-y-2">
+                        <ImageIcon className="h-10 w-10 stroke-1 text-muted-foreground/40" />
+                        <div className="text-xs">Foto bukti fisik tidak tersedia pada record ini</div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {event.proof_photo_path && (
                   <div className="text-[11px] font-mono text-muted-foreground truncate bg-muted/40 p-2 rounded-md">
@@ -486,6 +580,25 @@ export function LogDetailPage() {
           </div>
         </div>
       </div>
+
+      <Dialog open={zoomPhoto !== null} onOpenChange={() => setZoomPhoto(null)}>
+        <DialogContent className="sm:max-w-2xl p-4">
+          <DialogHeader className="pb-2">
+            <DialogTitle className="text-sm font-semibold truncate">
+              {zoomPhoto?.title || 'Foto Bukti Presensi'}
+            </DialogTitle>
+          </DialogHeader>
+          {zoomPhoto && (
+            <div className="relative rounded-xl overflow-hidden border bg-black flex items-center justify-center max-h-[80vh]">
+              <img
+                src={zoomPhoto.url}
+                alt={zoomPhoto.title}
+                className="max-h-[80vh] w-auto object-contain"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </HrdLayout>
   );
 }

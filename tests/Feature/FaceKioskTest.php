@@ -969,4 +969,180 @@ class FaceKioskTest extends TestCase
             $employee->delete();
         }
     }
+
+    public function test_hrd_can_delete_single_face_embedding_and_packet(): void
+    {
+        Storage::fake('public');
+        Http::preventStrayRequests();
+        Http::fake([
+            config('biometric.engine_url').'/api/v1/cache/sync' => Http::response([
+                'status' => 'ok',
+                'synced_employees' => 1,
+            ]),
+        ]);
+
+        $uniqueExtId = random_int(900000, 999999);
+        $employee = Employee::create([
+            'company_id' => 1,
+            'external_karyawan_id' => $uniqueExtId,
+            'id_karyawan' => 'EMPDEL'.$uniqueExtId,
+            'nama_karyawan' => 'Karyawan Uji Hapus Paket',
+            'status' => 'aktif',
+        ]);
+
+        try {
+            $fakePhotoBase64 = 'data:image/jpeg;base64,'.base64_encode('fake-jpg-content');
+            $templates = [];
+            foreach (['front', 'slight_left', 'slight_right'] as $pose) {
+                $templates[] = [
+                    'embedding_vector' => array_fill(0, 512, 0.07),
+                    'model_name' => 'buffalo_s',
+                    'model_version' => 'arcface_r50_v1',
+                    'pose_label' => $pose,
+                    'photo_base64' => $fakePhotoBase64,
+                ];
+                $templates[] = [
+                    'embedding_vector' => array_fill(0, 128, 0.06),
+                    'model_name' => 'sface',
+                    'model_version' => 'opencv_sface_2021dec',
+                    'pose_label' => $pose,
+                    'photo_base64' => null,
+                ];
+            }
+
+            $headers = $this->authenticateHrd();
+            $enrollRes = $this->postJson('/api/hrd/employees/'.$employee->id.'/enroll-face', [
+                'consent_given' => true,
+                'templates' => $templates,
+            ], $headers);
+            $enrollRes->assertOk();
+            $batchId = $enrollRes->json('batch_id');
+            $this->assertNotEmpty($batchId);
+
+            $detailRes = $this->getJson('/api/hrd/employees/'.$employee->id, $headers);
+            $detailRes->assertOk();
+            $packets = $detailRes->json('face_packets');
+            $this->assertCount(1, $packets);
+            $this->assertSame(3, $packets[0]['completed_count']);
+
+            $leftId = $packets[0]['poses']['slight_left']['id'];
+            $rightId = $packets[0]['poses']['slight_right']['id'];
+
+            $deleteSingleRes = $this->deleteJson(
+                "/api/hrd/employees/{$employee->id}/face-embeddings/{$leftId}",
+                [],
+                $headers
+            );
+            $deleteSingleRes->assertOk()->assertJson([
+                'success' => true,
+                'remaining_active_count' => 4,
+            ]);
+
+            $detailAfterSingle = $this->getJson('/api/hrd/employees/'.$employee->id, $headers);
+            $detailAfterSingle->assertOk();
+            $packetsAfterSingle = $detailAfterSingle->json('face_packets');
+            $this->assertCount(1, $packetsAfterSingle);
+            $this->assertSame(2, $packetsAfterSingle[0]['completed_count']);
+            $this->assertNull($packetsAfterSingle[0]['poses']['slight_left']);
+
+            $replacePoseRes = $this->postJson('/api/hrd/employees/'.$employee->id.'/enroll-face', [
+                'consent_given' => true,
+                'replace_embedding_id' => $rightId,
+                'batch_id' => $batchId,
+                'templates' => [
+                    [
+                        'embedding_vector' => array_fill(0, 512, 0.11),
+                        'model_name' => 'buffalo_s',
+                        'model_version' => 'arcface_r50_v1',
+                        'pose_label' => 'slight_right',
+                        'photo_base64' => $fakePhotoBase64,
+                    ],
+                ],
+            ], $headers);
+            $replacePoseRes->assertOk()->assertJson(['batch_id' => $batchId]);
+
+            $detailAfterReplace = $this->getJson('/api/hrd/employees/'.$employee->id, $headers);
+            $detailAfterReplace->assertOk();
+            $packetsAfterReplace = $detailAfterReplace->json('face_packets');
+            $this->assertCount(1, $packetsAfterReplace);
+            $this->assertNotSame($rightId, $packetsAfterReplace[0]['poses']['slight_right']['id']);
+
+            $deletePacketRes = $this->deleteJson('/api/hrd/employees/'.$employee->id.'/face-packets', [
+                'batch_id' => $batchId,
+            ], $headers);
+            $deletePacketRes->assertOk()->assertJson([
+                'success' => true,
+                'remaining_active_count' => 0,
+            ]);
+
+            $this->assertSame(
+                0,
+                FaceEmbedding::where('employee_id', $employee->id)->where('is_active', true)->count()
+            );
+
+            Http::assertSent(function ($request) use ($employee) {
+                $body = $request->data();
+
+                return str_ends_with($request->url(), '/api/v1/cache/sync')
+                    && ($body['employees'][0]['employee_id'] ?? null) === $employee->id
+                    && ($body['employees'][0]['embeddings'] ?? null) === [];
+            });
+        } finally {
+            FaceEmbedding::where('employee_id', $employee->id)->delete();
+            $employee->delete();
+        }
+    }
+
+    public function test_kiosk_attendance_tap_stores_three_proof_photos_and_log_detail_returns_all_three(): void
+    {
+        Storage::fake('public');
+        $emp = Employee::where('id_karyawan', 'EMP001')->first();
+        $this->assertNotNull($emp);
+
+        $idempotencyKey = 'test-three-proofs-'.uniqid();
+        $workDate = date('Y-m-d', strtotime('+30 days'));
+        AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
+        $ts = time();
+        $token = hash_hmac('sha256', "{$emp->id}:{$ts}:VERIFIED", config('biometric.shared_secret'));
+
+        $response = $this->postJson('/api/kiosk/attendance-tap', [
+            'idempotency_key' => $idempotencyKey,
+            'employee_id' => $emp->id,
+            'work_date' => $workDate,
+            'attendance_type' => 'clock_in',
+            'auth_method' => 'face_liveness',
+            'recorded_at' => date('c'),
+            'confidence_score' => 0.91,
+            'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp->id,
+            'top1_score' => 0.91,
+            'liveness_passed' => true,
+            'attestation_token' => $token,
+            'attestation_timestamp' => $ts,
+            'proof_photo_base64' => 'data:image/jpeg;base64,'.base64_encode('front-proof'),
+            'proof_photo_left_base64' => 'data:image/jpeg;base64,'.base64_encode('left-proof'),
+            'proof_photo_right_base64' => 'data:image/jpeg;base64,'.base64_encode('right-proof'),
+        ]);
+
+        $response->assertStatus(200);
+        $eventId = $response->json('event.id');
+        $this->assertNotNull($eventId);
+
+        $headers = $this->authenticateHrd();
+        $logsRes = $this->getJson('/api/hrd/logs?per_page=10', $headers);
+        $logsRes->assertOk();
+        $logRow = collect($logsRes->json('data'))->firstWhere('id', $eventId);
+        $this->assertNotNull($logRow);
+        $this->assertNotNull($logRow['proof_photo_url']);
+        $this->assertArrayNotHasKey('proof_photo_left_url', $logRow);
+        $this->assertArrayNotHasKey('proof_photo_right_url', $logRow);
+
+        $logDetailRes = $this->getJson("/api/hrd/logs/{$eventId}", $headers);
+        $logDetailRes->assertOk();
+        $this->assertNotNull($logDetailRes->json('event.proof_photo_url'));
+        $this->assertNotNull($logDetailRes->json('event.proof_photo_left_url'));
+        $this->assertNotNull($logDetailRes->json('event.proof_photo_right_url'));
+
+        AttendanceEvent::where('id', $eventId)->delete();
+    }
 }

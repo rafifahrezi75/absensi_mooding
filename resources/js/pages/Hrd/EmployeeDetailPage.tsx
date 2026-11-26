@@ -363,7 +363,7 @@ export function EmployeeDetailPage() {
               variant="outline"
               size="sm"
               className="h-9 text-xs gap-1.5"
-              onClick={goToFaceEnrollPage}
+              onClick={() => goToFaceEnrollPage(data.employee.has_biometric ? 'replace' : 'add')}
             >
               <ScanFace className="h-4 w-4 text-primary" />
               <span>{data.employee.has_biometric ? 'Ubah Wajah' : 'Daftarkan Wajah'}</span>
@@ -526,22 +526,26 @@ export function EmployeeDetailPage() {
           <CardContent className="p-6">
             {activeTab === 'faces' && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-semibold text-foreground">
-                      Galeri Foto & Vektor Biometrik Wajah
+                      Paket Foto & Vektor Biometrik Wajah ({facePackets.length} Paket)
                     </h2>
                     <p className="text-xs text-muted-foreground">
-                      Foto asli yang disimpan saat karyawan mendaftarkan wajah ke sistem biometrik.
+                      Setiap paket berisi 3 pose (Lurus, Kiri, Kanan). Klik foto untuk mengubah atau menghapus satu pose, atau hapus langsung satu paket.
                     </p>
                   </div>
-                  <Button size="sm" onClick={goToFaceEnrollPage} className="text-xs gap-1.5 h-8">
+                  <Button
+                    size="sm"
+                    onClick={() => goToFaceEnrollPage('add')}
+                    className="text-xs gap-1.5 h-9 w-fit"
+                  >
                     <Camera className="h-3.5 w-3.5" />
-                    <span>{data.employee.has_biometric ? 'Ubah Wajah (3 Foto)' : 'Daftarkan Wajah (3 Foto)'}</span>
+                    <span>{facePackets.length > 0 ? 'Tambah Paket Wajah (3 Foto)' : 'Daftarkan Wajah (3 Foto)'}</span>
                   </Button>
                 </div>
 
-                {visibleFaces.length === 0 ? (
+                {facePackets.length === 0 ? (
                   <div className="p-12 text-center rounded-xl border border-dashed bg-muted/20 flex flex-col items-center justify-center">
                     <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-3">
                       <ScanFace className="h-7 w-7" />
@@ -550,102 +554,178 @@ export function EmployeeDetailPage() {
                     <p className="text-xs text-muted-foreground mt-1 max-w-sm">
                       Karyawan ini belum memiliki referensi biometrik wajah. Daftarkan 3 foto pose (lurus, kiri, kanan) melalui halaman perekaman wajah.
                     </p>
-                    <Button size="sm" className="mt-4 gap-1.5 text-xs" onClick={goToFaceEnrollPage}>
+                    <Button size="sm" className="mt-4 gap-1.5 text-xs h-9" onClick={() => goToFaceEnrollPage('add')}>
                       <Camera className="h-3.5 w-3.5" />
                       <span>Daftarkan Wajah Sekarang</span>
                     </Button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {visibleFaces.map((fb: any, idx: number) => (
-                      <div key={fb.id || idx} className="rounded-xl border bg-card p-4 shadow-2xs space-y-3.5 hover:shadow-xs transition-shadow">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider bg-primary/10 text-primary border-primary/20">
-                              Pose: {fb.pose_label}
-                            </Badge>
-                            <Badge variant="outline" className="text-[10px] bg-muted text-muted-foreground">
-                              {fb.model_version || 'InsightFace 512D'}
-                            </Badge>
-                            {sfacePoses.has(fb.pose_label) && (
-                              <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20">
-                                +SFace 128D
+                  <div className="space-y-5">
+                    {facePackets.map((packet: any, pIdx: number) => {
+                      const packetNumber = facePackets.length - pIdx;
+                      return (
+                        <Card key={packet.packet_key || pIdx} className="border bg-card shadow-2xs overflow-hidden">
+                          <CardHeader className="py-3 px-4 border-b bg-muted/25 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex items-center gap-1.5 font-semibold text-sm text-foreground">
+                                <Layers className="h-4 w-4 text-primary" />
+                                <span>Paket Wajah #{packetNumber}</span>
+                              </div>
+                              <Badge variant="outline" className="text-[11px] bg-primary/10 text-primary border-primary/25 font-semibold">
+                                {packet.completed_count || 0}/3 Pose
                               </Badge>
-                            )}
-                          </div>
-                          <span className="text-[10px] text-muted-foreground font-mono shrink-0">
-                            Vektor #{fb.id}
-                          </span>
-                        </div>
+                              <span className="text-[11px] font-mono text-muted-foreground">
+                                {packet.created_at || '-'}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground">
+                                oleh {packet.enrolled_by_name || 'HRD'}
+                              </span>
+                            </div>
 
-                        {fb.photo_url ? (
-                          <div
-                            className="relative aspect-4/3 rounded-lg overflow-hidden border bg-black group cursor-pointer"
-                            onClick={() =>
-                              setLightboxImage({
-                                url: fb.photo_url,
-                                title: `Foto Wajah #${fb.id} - ${data.employee.nama_karyawan} (Pose: ${fb.pose_label})`,
-                              })
-                            }
-                          >
-                            <img
-                              src={fb.photo_url}
-                              alt={`Face ${fb.id}`}
-                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                            />
-                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-medium">
-                              <Maximize2 className="h-4 w-4" />
-                              <span>Klik untuk memperbesar</span>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="aspect-4/3 rounded-lg border-2 border-dashed bg-muted/30 flex flex-col items-center justify-center p-4 text-center">
-                            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-2">
-                              <BrainCircuit className="h-5 w-5" />
-                            </div>
-                            <div className="text-xs font-semibold">Vektor Biometrik Aktif ({fb.dimensions}D)</div>
-                            <p className="text-[10px] text-muted-foreground mt-1 max-w-xs">
-                              Foto snapshot pendaftaran awal belum tersimpan, namun vektor biometrik tersimpan di database dan aktif dicocokkan di Kiosk.
-                            </p>
                             <Button
+                              type="button"
                               variant="outline"
                               size="sm"
-                              className="mt-2.5 text-xs h-7 gap-1"
-                              onClick={goToFaceEnrollPage}
+                              onClick={() =>
+                                setDeleteTarget({
+                                  type: 'packet',
+                                  packet,
+                                  packetNumber,
+                                })
+                              }
+                              className="h-8 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive w-fit shrink-0"
                             >
-                              <Camera className="h-3 w-3" />
-                              <span>Perbarui Foto</span>
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Hapus Paket</span>
                             </Button>
-                          </div>
-                        )}
+                          </CardHeader>
 
-                        <div className="space-y-1.5 text-xs border-t pt-3">
-                          <div className="flex justify-between text-muted-foreground">
-                            <span>Waktu Pendaftaran:</span>
-                            <span className="font-mono text-foreground font-medium">{fb.created_at || '-'}</span>
-                          </div>
-                          <div className="flex justify-between text-muted-foreground">
-                            <span>Didaftarkan Oleh:</span>
-                            <span className="text-foreground font-medium">{fb.enrolled_by_name || 'HRD'}</span>
-                          </div>
-                          <div className="flex justify-between text-muted-foreground">
-                            <span>Dimensi Fitur:</span>
-                            <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{fb.dimensions} Floats</span>
-                          </div>
-                        </div>
+                          <CardContent className="p-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                              {POSE_SLOTS.map((slot) => {
+                                const fb = packet.poses?.[slot.key] || null;
 
-                        {fb.vector_preview && fb.vector_preview.length > 0 && (
-                          <div className="p-2.5 rounded-lg bg-muted/40 border text-[10px] font-mono text-muted-foreground">
-                            <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-                              Cuplikan Vektor Fitur AI (5 sampel awal):
+                                if (!fb) {
+                                  return (
+                                    <div
+                                      key={slot.key}
+                                      className="rounded-xl border-2 border-dashed bg-muted/20 p-3 flex flex-col justify-between min-h-[210px]"
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider">
+                                          {slot.shortLabel}
+                                        </Badge>
+                                        <span className="text-[10px] text-muted-foreground">Belum terisi</span>
+                                      </div>
+
+                                      <div className="my-auto py-4 flex flex-col items-center text-center gap-2">
+                                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
+                                          <Camera className="h-4 w-4" />
+                                        </div>
+                                        <p className="text-[11px] text-muted-foreground">
+                                          Foto pose {slot.shortLabel} belum ada atau sudah dihapus
+                                        </p>
+                                      </div>
+
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => goToAddMissingPose(slot.key, packet)}
+                                        className="w-full h-8 text-xs gap-1.5"
+                                      >
+                                        <Camera className="h-3.5 w-3.5" />
+                                        <span>Ambil Foto {slot.shortLabel}</span>
+                                      </Button>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div
+                                    key={fb.id || slot.key}
+                                    className="rounded-xl border bg-background p-3 space-y-2.5 flex flex-col"
+                                  >
+                                    <div className="flex items-center justify-between gap-1.5">
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider bg-primary/10 text-primary border-primary/20">
+                                          {slot.shortLabel}
+                                        </Badge>
+                                        {fb.has_sface && (
+                                          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20">
+                                            +SFace
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] font-mono text-muted-foreground">
+                                        #{fb.id}
+                                      </span>
+                                    </div>
+
+                                    {fb.photo_url ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedFaceAction({
+                                            item: fb,
+                                            packet,
+                                            poseLabelText: slot.label,
+                                          })
+                                        }
+                                        className="relative aspect-4/3 w-full rounded-lg overflow-hidden border bg-black group text-left focus-visible:outline-2 focus-visible:outline-ring"
+                                      >
+                                        <img
+                                          src={fb.photo_url}
+                                          alt={`${slot.label} #${fb.id}`}
+                                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                        />
+                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/45 to-transparent px-2.5 py-2 flex items-center justify-between text-white text-[11px] font-medium">
+                                          <span>Klik: Ubah / Hapus</span>
+                                          <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+                                        </div>
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedFaceAction({
+                                            item: fb,
+                                            packet,
+                                            poseLabelText: slot.label,
+                                          })
+                                        }
+                                        className="aspect-4/3 w-full rounded-lg border-2 border-dashed bg-muted/30 flex flex-col items-center justify-center p-3 text-center hover:border-primary/50 transition-colors"
+                                      >
+                                        <BrainCircuit className="h-5 w-5 text-primary mb-1.5" />
+                                        <div className="text-xs font-semibold text-foreground">
+                                          Vektor Aktif ({fb.dimensions}D)
+                                        </div>
+                                        <span className="text-[10px] text-primary font-medium mt-1">
+                                          Klik untuk Ubah / Hapus
+                                        </span>
+                                      </button>
+                                    )}
+
+                                    <div className="text-[11px] text-muted-foreground space-y-1 pt-0.5">
+                                      <div className="flex justify-between">
+                                        <span>Model:</span>
+                                        <span className="font-mono text-foreground">{fb.model_version || 'arcface_r50_v1'}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span>Kualitas / Yaw:</span>
+                                        <span className="font-mono text-foreground">
+                                          {fb.quality_score ?? '-'} / {fb.pose_yaw ?? '-'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
-                            <div className="text-foreground truncate">
-                              [{fb.vector_preview.map((v: number) => (typeof v === 'number' ? v.toFixed(4) : v)).join(', ')}, ...]
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -740,7 +820,7 @@ export function EmployeeDetailPage() {
                                 size="sm"
                                 variant="outline"
                                 className="h-7 text-xs gap-1 border-amber-500/30 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10 dark:text-amber-400 cursor-pointer"
-                                onClick={() => navigate(`/hrd/logs/${ev.id}`)}
+                                onClick={() => navigate(`/hrd/logs/${ev.id}?from=employee&employee_id=${data.employee.id}`)}
                               >
                                 <ExternalLink className="h-3 w-3" />
                                 Detail & Audit
@@ -853,6 +933,121 @@ export function EmployeeDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={selectedFaceAction !== null} onOpenChange={() => setSelectedFaceAction(null)}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-semibold">
+              {selectedFaceAction?.poseLabelText} (Vektor #{selectedFaceAction?.item?.id})
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Kelola foto pose ini: ubah dengan foto pose baru atau hapus dari paket biometrik.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedFaceAction && (
+            <div className="space-y-4">
+              {selectedFaceAction.item.photo_url ? (
+                <div className="relative aspect-4/3 rounded-xl overflow-hidden border bg-black flex items-center justify-center">
+                  <img
+                    src={selectedFaceAction.item.photo_url}
+                    alt={selectedFaceAction.poseLabelText}
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="aspect-4/3 rounded-xl border border-dashed bg-muted/30 flex flex-col items-center justify-center p-6 text-center gap-2">
+                  <BrainCircuit className="h-8 w-8 text-primary" />
+                  <div className="text-xs font-semibold">
+                    Vektor Biometrik Aktif ({selectedFaceAction.item.dimensions}D)
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2 text-xs bg-muted/30 p-3 rounded-lg border">
+                <div>
+                  <span className="text-muted-foreground">Waktu: </span>
+                  <span className="font-mono text-foreground">{selectedFaceAction.item.created_at || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Kualitas: </span>
+                  <span className="font-mono text-foreground">{selectedFaceAction.item.quality_score ?? '-'}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    setDeleteTarget({
+                      type: 'single',
+                      item: selectedFaceAction.item,
+                      poseLabelText: selectedFaceAction.poseLabelText,
+                    })
+                  }
+                  className="sm:flex-1 h-10 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Hapus Foto Ini</span>
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => goToUpdateSinglePose(selectedFaceAction.item, selectedFaceAction.packet)}
+                  className="sm:flex-1 h-10 text-xs gap-1.5"
+                >
+                  <Camera className="h-4 w-4" />
+                  <span>Ubah Foto Ini</span>
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={() => !deletingFace && setDeleteTarget(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-destructive flex items-center gap-2">
+              <Trash2 className="h-4 w-4" />
+              <span>
+                {deleteTarget?.type === 'packet'
+                  ? `Hapus Paket Wajah #${deleteTarget.packetNumber}?`
+                  : `Hapus Foto ${deleteTarget?.poseLabelText}?`}
+              </span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {deleteTarget?.type === 'packet'
+                ? 'Seluruh foto dan vektor biometrik dalam paket ini akan dinonaktifkan dari pencocokan Kiosk.'
+                : 'Foto dan vektor pose ini akan dinonaktifkan dari paket dan disinkronkan ulang ke mesin wajah.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex justify-end gap-2 pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={deletingFace}
+              onClick={() => setDeleteTarget(null)}
+              className="h-9 text-xs"
+            >
+              Batal
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={deletingFace}
+              onClick={handleConfirmDeleteFace}
+              className="h-9 text-xs gap-1.5"
+            >
+              {deletingFace && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+              <span>{deletingFace ? 'Menghapus...' : 'Ya, Hapus'}</span>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={lightboxImage !== null} onOpenChange={() => setLightboxImage(null)}>
         <DialogContent className="sm:max-w-2xl p-4">
