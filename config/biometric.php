@@ -5,7 +5,7 @@ return [
     'match_threshold' => (float) env('FACE_MATCH_THRESHOLD', 0.65),
     'margin_threshold' => (float) env('FACE_MARGIN_THRESHOLD', 0.08),
     'capture_frame_count' => (int) env('FACE_CAPTURE_FRAME_COUNT', 5),
-    'min_consistent_frames' => (int) env('FACE_MIN_CONSISTENT_FRAMES', 4),
+    'min_consistent_frames' => (int) env('FACE_MIN_CONSISTENT_FRAMES', 3),
 
     'quality' => [
         'min_face_size' => (int) env('FACE_MIN_SIZE_PX', 85),

@@ -193,6 +193,16 @@ class HrdController extends Controller
             $query->where('status', $status);
         }
 
+        if ($hasBiometric === 'yes') {
+            $query->whereHas('faceEmbeddings', function ($q) {
+                $q->where('is_active', true);
+            });
+        } elseif ($hasBiometric === 'no') {
+            $query->whereDoesntHave('faceEmbeddings', function ($q) {
+                $q->where('is_active', true);
+            });
+        }
+
         if ($cabangId) {
             $query->where('cabang_id', $cabangId);
         }
@@ -232,12 +242,6 @@ class HrdController extends Controller
                 'has_pin' => ! empty($emp->pin_hash),
             ];
         });
-
-        if ($hasBiometric === 'yes') {
-            $items = $items->filter(fn ($i) => $i['has_biometric'])->values();
-        } elseif ($hasBiometric === 'no') {
-            $items = $items->filter(fn ($i) => ! $i['has_biometric'])->values();
-        }
 
         return response()->json([
             'data' => $items,
@@ -1132,6 +1136,7 @@ class HrdController extends Controller
                 if (array_key_exists($poseKey, $batchedGroups[$batchKey]['poses']) && $batchedGroups[$batchKey]['poses'][$poseKey] === null) {
                     $batchedGroups[$batchKey]['poses'][$poseKey] = $item;
                 }
+
                 continue;
             }
 

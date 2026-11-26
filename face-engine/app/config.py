@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     top_k: int = 5
 
     capture_frame_count: int = 5
-    min_consistent_frames: int = 4
+    min_consistent_frames: int = 3
     min_recognition_frames: int = 3
     max_recognition_yaw: float = 15.0
     min_probe_stability: float = 0.70

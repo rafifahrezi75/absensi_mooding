@@ -818,9 +818,13 @@ export async function captureFrameBlob(
 ): Promise<Blob | null> {
   if (video.readyState < 2) return null;
 
+  const w = video.videoWidth || 640;
+  const h = video.videoHeight || 480;
+  if (w <= 0 || h <= 0) return null;
+
   const canvas = document.createElement('canvas');
-  canvas.width = Math.min(video.videoWidth || 640, 640);
-  canvas.height = Math.min(video.videoHeight || 480, 480);
+  canvas.width = Math.min(w, 640);
+  canvas.height = Math.min(h, 480);
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 

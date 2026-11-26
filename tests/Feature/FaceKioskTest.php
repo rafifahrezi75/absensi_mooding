@@ -66,7 +66,7 @@ class FaceKioskTest extends TestCase
                 ],
             ])
             ->assertJsonPath('settings.capture_frame_count', 5)
-            ->assertJsonPath('settings.min_consistent_frames', 4)
+            ->assertJsonPath('settings.min_consistent_frames', 3)
             ->assertJsonPath('settings.allowed_challenges', [
                 'HEAD_TURN',
             ]);
@@ -1165,5 +1165,27 @@ class FaceKioskTest extends TestCase
         $this->assertNotNull($logDetailRes->json('event.proof_photo_right_url'));
 
         AttendanceEvent::where('id', $eventId)->delete();
+    }
+
+    public function test_hrd_employees_biometric_filtering_and_pagination(): void
+    {
+        $headers = $this->authenticateHrd();
+
+        $allRes = $this->getJson('/api/hrd/employees?per_page=10', $headers);
+        $allRes->assertOk();
+        $this->assertArrayHasKey('data', $allRes->json());
+        $this->assertArrayHasKey('total', $allRes->json());
+
+        $yesRes = $this->getJson('/api/hrd/employees?has_biometric=yes&per_page=10', $headers);
+        $yesRes->assertOk();
+        foreach ($yesRes->json('data') as $item) {
+            $this->assertTrue($item['has_biometric']);
+        }
+
+        $noRes = $this->getJson('/api/hrd/employees?has_biometric=no&per_page=10', $headers);
+        $noRes->assertOk();
+        foreach ($noRes->json('data') as $item) {
+            $this->assertFalse($item['has_biometric']);
+        }
     }
 }

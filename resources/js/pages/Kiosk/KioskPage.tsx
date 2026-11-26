@@ -317,9 +317,9 @@ export function KioskPage() {
     setScanStatus('scanning');
 
     if (pythonEngineActive && videoRef.current) {
-      const identityFrameCount = config?.settings?.capture_frame_count || 5;
+      const minRequired = Math.min(config?.settings?.min_consistent_frames || 3, config?.settings?.capture_frame_count || 5);
       const frames = [...challengeFrames];
-      if (frames.length >= identityFrameCount) {
+      if (frames.length >= minRequired) {
         const companyId = config?.location?.company_id || 1;
         const allowedCompanyIds = [companyId];
         const proyekId = config?.location?.proyek_id;
@@ -433,17 +433,17 @@ export function KioskPage() {
         const identityFrameCount = config?.settings?.capture_frame_count || 5;
         const requiredFrames = identityFrameCount + 2;
         const shouldCapture =
-          [3, 6, 9, 12, 15, 22, 26, 32, 35].includes(sequenceStep) ||
-          (sequenceStep > 35 && livenessFramesRef.current.length < requiredFrames);
+          (sequenceStep % 3 === 0 && livenessFramesRef.current.length < requiredFrames) ||
+          (sequenceStep > 30 && livenessFramesRef.current.length < requiredFrames);
 
-        if (sequenceStep < 18) {
+        if (sequenceStep < 15) {
           setChallengeUI({
             text: 'Hadap Lurus',
             subtext: 'Tahan posisi sebentar',
             badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40 animate-pulse',
             borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
           });
-        } else if (sequenceStep < 29) {
+        } else if (sequenceStep < 25) {
           setChallengeUI({
             text: 'Tengok Kanan',
             subtext: 'Arahkan kepala sedikit ke kanan',
@@ -463,9 +463,9 @@ export function KioskPage() {
           const frame = await captureFrameBlob(videoRef.current);
           if (frame) {
             livenessFramesRef.current = [...livenessFramesRef.current, frame];
-            if (sequenceStep < 18) {
+            if (sequenceStep < 15) {
               phaseProofRef.current.front = frame;
-            } else if (sequenceStep < 29) {
+            } else if (sequenceStep < 25) {
               phaseProofRef.current.slight_right = frame;
             } else {
               phaseProofRef.current.slight_left = frame;
@@ -473,7 +473,7 @@ export function KioskPage() {
           }
         }
 
-        if (sequenceStep >= 36 && livenessFramesRef.current.length >= requiredFrames) {
+        if (sequenceStep >= 28 && livenessFramesRef.current.length >= requiredFrames) {
           serverOnlyTimerRef.current = 0;
           const challengeFrames = [...livenessFramesRef.current];
           livenessFramesRef.current = [];
@@ -483,6 +483,12 @@ export function KioskPage() {
 
         if (sequenceStep >= 42) {
           serverOnlyTimerRef.current = 0;
+          if (livenessFramesRef.current.length >= Math.min(identityFrameCount, 4)) {
+            const challengeFrames = [...livenessFramesRef.current];
+            livenessFramesRef.current = [];
+            await triggerRecognition('HEAD_TURN', challengeFrames);
+            return;
+          }
           livenessFramesRef.current = [];
           beginErrorCooldown('Kamera belum menangkap frame yang cukup. Silakan posisikan wajah lalu coba lagi.');
         }
