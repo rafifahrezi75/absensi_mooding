@@ -1205,7 +1205,19 @@ export function EmployeeDetailPage() {
               <div className="space-y-3">
                 {!photoPreview ? (
                   <div className="relative aspect-square max-w-[280px] mx-auto rounded-2xl overflow-hidden bg-black border shadow-md">
-                    <video ref={profileCameraRef} playsInline autoPlay muted className="w-full h-full object-cover transform -scale-x-100" />
+                    <video
+                      ref={(el) => {
+                        profileCameraRef.current = el;
+                        if (el && profileStreamRef.current && el.srcObject !== profileStreamRef.current) {
+                          el.srcObject = profileStreamRef.current;
+                          el.play().catch(() => {});
+                        }
+                      }}
+                      playsInline
+                      autoPlay
+                      muted
+                      className="w-full h-full object-cover transform -scale-x-100"
+                    />
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                       <div className="w-48 h-48 rounded-full border-2 border-dashed border-white/60" />
                     </div>

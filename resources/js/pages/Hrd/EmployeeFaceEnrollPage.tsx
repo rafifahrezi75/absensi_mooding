@@ -114,12 +114,17 @@ export function EmployeeFaceEnrollPage() {
   useEffect(() => {
     fetchEmployee();
     verifyEngine();
-    startCamera();
+  }, [id]);
+
+  useEffect(() => {
+    if (!loadingEmployee && employee) {
+      startCamera();
+    }
 
     return () => {
       stopCamera();
     };
-  }, [id]);
+  }, [loadingEmployee, employee]);
 
   const fetchEmployee = async () => {
     if (!id) return;
@@ -172,7 +177,21 @@ export function EmployeeFaceEnrollPage() {
             .then(() => setCameraReady(true))
             .catch(() => setCameraReady(true));
         };
+        videoRef.current
+          ?.play()
+          .then(() => setCameraReady(true))
+          .catch(() => setCameraReady(true));
       }
+
+      setTimeout(() => {
+        if (streamRef.current?.active && !cameraReady) {
+          if (videoRef.current && !videoRef.current.srcObject) {
+            videoRef.current.srcObject = streamRef.current;
+          }
+          videoRef.current?.play().catch(() => {});
+          setCameraReady(true);
+        }
+      }, 750);
     } catch (err: any) {
       setCameraError(err?.message || 'Kamera tidak dapat diakses atau sedang dipakai aplikasi lain');
     }
@@ -599,7 +618,18 @@ export function EmployeeFaceEnrollPage() {
             <CardContent className="space-y-4">
               <div className="relative aspect-4/3 rounded-xl overflow-hidden bg-black border">
                 <video
-                  ref={videoRef}
+                  ref={(el) => {
+                    videoRef.current = el;
+                    if (el && streamRef.current && el.srcObject !== streamRef.current) {
+                      el.srcObject = streamRef.current;
+                      el.onloadedmetadata = () => {
+                        el.play().then(() => setCameraReady(true)).catch(() => setCameraReady(true));
+                      };
+                      if (el.readyState >= 1) {
+                        el.play().then(() => setCameraReady(true)).catch(() => setCameraReady(true));
+                      }
+                    }
+                  }}
                   autoPlay
                   playsInline
                   muted
