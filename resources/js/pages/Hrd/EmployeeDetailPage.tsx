@@ -47,11 +47,7 @@ export function EmployeeDetailPage() {
     initialTabParam === 'attendances' || initialTabParam === 'profile' ? initialTabParam : 'faces'
   );
   const [lightboxImage, setLightboxImage] = useState<{ url: string; title: string } | null>(null);
-  const [selectedFaceAction, setSelectedFaceAction] = useState<{
-    item: any;
-    packet: any;
-    poseLabelText: string;
-  } | null>(null);
+  const [activePhotoActionId, setActivePhotoActionId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<
     | { type: 'single'; item: any; poseLabelText: string }
     | { type: 'packet'; packet: any; packetNumber: number }
@@ -225,7 +221,7 @@ export function EmployeeDetailPage() {
     if (packet?.embedding_ids?.length) {
       params.set('packet_ids', packet.embedding_ids.join(','));
     }
-    setSelectedFaceAction(null);
+    setActivePhotoActionId(null);
     navigate(`/hrd/employees/${id}/face?${params.toString()}`);
   };
 
@@ -267,7 +263,7 @@ export function EmployeeDetailPage() {
         }
       }
       setDeleteTarget(null);
-      setSelectedFaceAction(null);
+      setActivePhotoActionId(null);
       fetchDetail();
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Gagal menghapus data foto wajah');
@@ -383,7 +379,7 @@ export function EmployeeDetailPage() {
           </div>
         </div>
 
-        <Card className="shadow-xs border overflow-hidden p-0 py-0 gap-0">
+        <div className="rounded-xl border bg-card shadow-xs overflow-hidden">
           <div className="p-6 bg-muted/40 flex flex-col md:flex-row md:items-center justify-between gap-6 border-b">
             <div className="flex items-center gap-5">
               <div
@@ -523,7 +519,7 @@ export function EmployeeDetailPage() {
             </button>
           </div>
 
-          <CardContent className="p-6">
+          <div className="p-6">
             {activeTab === 'faces' && (
               <div className="space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -532,7 +528,7 @@ export function EmployeeDetailPage() {
                       Paket Foto & Vektor Biometrik Wajah ({facePackets.length} Paket)
                     </h2>
                     <p className="text-xs text-muted-foreground">
-                      Setiap paket berisi 3 pose (Lurus, Kiri, Kanan). Klik foto untuk mengubah atau menghapus satu pose, atau hapus langsung satu paket.
+                      Setiap paket berisi 3 pose (Lurus, Kiri, Kanan). Klik atau arahkan kursor ke foto untuk mengubah atau menghapus satu pose, atau gunakan tombol di pojok kartu untuk menghapus seluruh paket.
                     </p>
                   </div>
                   <Button
@@ -564,8 +560,8 @@ export function EmployeeDetailPage() {
                     {facePackets.map((packet: any, pIdx: number) => {
                       const packetNumber = facePackets.length - pIdx;
                       return (
-                        <Card key={packet.packet_key || pIdx} className="border bg-card shadow-2xs overflow-hidden">
-                          <CardHeader className="py-3 px-4 border-b bg-muted/25 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div key={packet.packet_key || pIdx} className="rounded-xl border bg-card shadow-2xs overflow-hidden">
+                          <div className="py-3 px-4 border-b bg-muted/25 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="flex items-center gap-1.5 font-semibold text-sm text-foreground">
                                 <Layers className="h-4 w-4 text-primary" />
@@ -598,9 +594,9 @@ export function EmployeeDetailPage() {
                               <Trash2 className="h-3.5 w-3.5" />
                               <span>Hapus Paket</span>
                             </Button>
-                          </CardHeader>
+                          </div>
 
-                          <CardContent className="p-4">
+                          <div className="p-4">
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                               {POSE_SLOTS.map((slot) => {
                                 const fb = packet.poses?.[slot.key] || null;
@@ -641,6 +637,8 @@ export function EmployeeDetailPage() {
                                   );
                                 }
 
+                                const isActionActive = activePhotoActionId === fb.id;
+
                                 return (
                                   <div
                                     key={fb.id || slot.key}
@@ -663,47 +661,120 @@ export function EmployeeDetailPage() {
                                     </div>
 
                                     {fb.photo_url ? (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedFaceAction({
-                                            item: fb,
-                                            packet,
-                                            poseLabelText: slot.label,
-                                          })
-                                        }
-                                        className="relative aspect-4/3 w-full rounded-lg overflow-hidden border bg-black group text-left focus-visible:outline-2 focus-visible:outline-ring"
+                                      <div
+                                        className="relative aspect-4/3 w-full rounded-lg overflow-hidden border bg-black group select-none cursor-pointer"
+                                        onClick={() => setActivePhotoActionId(isActionActive ? null : fb.id)}
                                       >
                                         <img
                                           src={fb.photo_url}
                                           alt={`${slot.label} #${fb.id}`}
-                                          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                          className={`w-full h-full object-cover transition-all duration-300 ${
+                                            isActionActive
+                                              ? 'filter blur-sm scale-105 brightness-60'
+                                              : 'group-hover:filter group-hover:blur-sm group-hover:scale-105 group-hover:brightness-60'
+                                          }`}
                                         />
-                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/45 to-transparent px-2.5 py-2 flex items-center justify-between text-white text-[11px] font-medium">
-                                          <span>Klik: Ubah / Hapus</span>
-                                          <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+
+                                        <div
+                                          className={`absolute inset-0 bg-black/45 backdrop-blur-xs flex flex-col items-center justify-center gap-2 p-3 transition-opacity duration-200 ${
+                                            isActionActive
+                                              ? 'opacity-100 pointer-events-auto'
+                                              : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'
+                                          }`}
+                                        >
+                                          <div className="text-[11px] font-semibold text-white tracking-wide uppercase drop-shadow-sm">
+                                            {slot.label}
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="secondary"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                goToUpdateSinglePose(fb, packet);
+                                              }}
+                                              className="h-8 px-3 text-xs font-semibold gap-1.5 shadow-md bg-white text-gray-900 hover:bg-gray-100"
+                                            >
+                                              <Camera className="h-3.5 w-3.5 text-primary" />
+                                              <span>Ubah</span>
+                                            </Button>
+
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="destructive"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setDeleteTarget({
+                                                  type: 'single',
+                                                  item: fb,
+                                                  poseLabelText: slot.label,
+                                                });
+                                              }}
+                                              className="h-8 px-3 text-xs font-semibold gap-1.5 shadow-md"
+                                            >
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                              <span>Hapus</span>
+                                            </Button>
+                                          </div>
                                         </div>
-                                      </button>
+                                      </div>
                                     ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedFaceAction({
-                                            item: fb,
-                                            packet,
-                                            poseLabelText: slot.label,
-                                          })
-                                        }
-                                        className="aspect-4/3 w-full rounded-lg border-2 border-dashed bg-muted/30 flex flex-col items-center justify-center p-3 text-center hover:border-primary/50 transition-colors"
+                                      <div
+                                        className="aspect-4/3 w-full rounded-lg border-2 border-dashed bg-muted/30 flex flex-col items-center justify-center p-3 text-center group relative overflow-hidden cursor-pointer select-none"
+                                        onClick={() => setActivePhotoActionId(isActionActive ? null : fb.id)}
                                       >
-                                        <BrainCircuit className="h-5 w-5 text-primary mb-1.5" />
+                                        <BrainCircuit className="h-6 w-6 text-primary mb-1.5" />
                                         <div className="text-xs font-semibold text-foreground">
                                           Vektor Aktif ({fb.dimensions}D)
                                         </div>
-                                        <span className="text-[10px] text-primary font-medium mt-1">
-                                          Klik untuk Ubah / Hapus
+                                        <span className="text-[10px] text-muted-foreground mt-0.5">
+                                          Pose: {slot.label}
                                         </span>
-                                      </button>
+
+                                        <div
+                                          className={`absolute inset-0 bg-background/90 backdrop-blur-xs flex flex-col items-center justify-center gap-2 p-3 transition-opacity duration-200 ${
+                                            isActionActive
+                                              ? 'opacity-100 pointer-events-auto'
+                                              : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'
+                                          }`}
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="default"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                goToUpdateSinglePose(fb, packet);
+                                              }}
+                                              className="h-8 px-3 text-xs font-semibold gap-1.5 shadow-xs"
+                                            >
+                                              <Camera className="h-3.5 w-3.5" />
+                                              <span>Ubah</span>
+                                            </Button>
+
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              variant="destructive"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setDeleteTarget({
+                                                  type: 'single',
+                                                  item: fb,
+                                                  poseLabelText: slot.label,
+                                                });
+                                              }}
+                                              className="h-8 px-3 text-xs font-semibold gap-1.5 shadow-xs"
+                                            >
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                              <span>Hapus</span>
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      </div>
                                     )}
 
                                     <div className="text-[11px] text-muted-foreground space-y-1 pt-0.5">
@@ -722,8 +793,8 @@ export function EmployeeDetailPage() {
                                 );
                               })}
                             </div>
-                          </CardContent>
-                        </Card>
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
@@ -930,80 +1001,9 @@ export function EmployeeDetailPage() {
                 </Card>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
-
-      <Dialog open={selectedFaceAction !== null} onOpenChange={() => setSelectedFaceAction(null)}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-sm font-semibold">
-              {selectedFaceAction?.poseLabelText} (Vektor #{selectedFaceAction?.item?.id})
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Kelola foto pose ini: ubah dengan foto pose baru atau hapus dari paket biometrik.
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedFaceAction && (
-            <div className="space-y-4">
-              {selectedFaceAction.item.photo_url ? (
-                <div className="relative aspect-4/3 rounded-xl overflow-hidden border bg-black flex items-center justify-center">
-                  <img
-                    src={selectedFaceAction.item.photo_url}
-                    alt={selectedFaceAction.poseLabelText}
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-              ) : (
-                <div className="aspect-4/3 rounded-xl border border-dashed bg-muted/30 flex flex-col items-center justify-center p-6 text-center gap-2">
-                  <BrainCircuit className="h-8 w-8 text-primary" />
-                  <div className="text-xs font-semibold">
-                    Vektor Biometrik Aktif ({selectedFaceAction.item.dimensions}D)
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2 text-xs bg-muted/30 p-3 rounded-lg border">
-                <div>
-                  <span className="text-muted-foreground">Waktu: </span>
-                  <span className="font-mono text-foreground">{selectedFaceAction.item.created_at || '-'}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Kualitas: </span>
-                  <span className="font-mono text-foreground">{selectedFaceAction.item.quality_score ?? '-'}</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row gap-2 pt-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    setDeleteTarget({
-                      type: 'single',
-                      item: selectedFaceAction.item,
-                      poseLabelText: selectedFaceAction.poseLabelText,
-                    })
-                  }
-                  className="sm:flex-1 h-10 text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  <span>Hapus Foto Ini</span>
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => goToUpdateSinglePose(selectedFaceAction.item, selectedFaceAction.packet)}
-                  className="sm:flex-1 h-10 text-xs gap-1.5"
-                >
-                  <Camera className="h-4 w-4" />
-                  <span>Ubah Foto Ini</span>
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={deleteTarget !== null} onOpenChange={() => !deletingFace && setDeleteTarget(null)}>
         <DialogContent className="sm:max-w-sm">

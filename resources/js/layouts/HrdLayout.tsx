@@ -285,7 +285,7 @@ export function HrdLayout({ children }: HrdLayoutProps) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 min-h-0 bg-background">{children}</main>
       </div>
     </div>
   );
