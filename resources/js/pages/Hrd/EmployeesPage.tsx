@@ -91,8 +91,8 @@ export function EmployeesPage() {
           </div>
         </div>
 
-        <Card className="shadow-xs border">
-          <CardHeader className="pb-3">
+        <Card className="shadow-xs border overflow-hidden">
+          <CardHeader className="py-3 px-4 border-b bg-muted/20">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <form onSubmit={handleSearchSubmit} className="flex items-center gap-2 max-w-sm w-full">
                 <div className="relative w-full">

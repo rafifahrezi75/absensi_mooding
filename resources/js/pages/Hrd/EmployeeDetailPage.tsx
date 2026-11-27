@@ -909,8 +909,8 @@ export function EmployeeDetailPage() {
 
             {activeTab === 'profile' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card className="shadow-2xs">
-                  <CardHeader className="pb-3">
+                <Card className="shadow-2xs border overflow-hidden">
+                  <CardHeader className="py-3 px-4 border-b bg-muted/20">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2 text-primary">
                       <Clock className="h-4 w-4" />
                       <span>Jadwal Shift Kerja</span>
@@ -919,7 +919,7 @@ export function EmployeeDetailPage() {
                       Konfigurasi jam masuk, jam pulang, dan jam istirahat.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="p-4">
                     {data.shift ? (
                       <div className="space-y-3 text-xs">
                         <div className="flex justify-between border-b pb-2">
@@ -953,8 +953,8 @@ export function EmployeeDetailPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="shadow-2xs">
-                  <CardHeader className="pb-3">
+                <Card className="shadow-2xs border overflow-hidden">
+                  <CardHeader className="py-3 px-4 border-b bg-muted/20">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2 text-primary">
                       <ShieldCheck className="h-4 w-4" />
                       <span>Keamanan & Data Kepatuhan</span>
@@ -963,7 +963,7 @@ export function EmployeeDetailPage() {
                       Audit persetujuan privasi biometrik dan jalur darurat.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="p-4">
                     <div className="space-y-3 text-xs">
                       <div className="flex justify-between border-b pb-2">
                         <span className="text-muted-foreground">Status PIN Darurat:</span>

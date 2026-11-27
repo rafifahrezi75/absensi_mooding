@@ -124,8 +124,8 @@ export function LogsPage() {
           </div>
         </div>
 
-        <Card className="shadow-xs border">
-          <CardHeader className="pb-3 border-b bg-muted/20">
+        <Card className="shadow-xs border overflow-hidden">
+          <CardHeader className="py-3 px-4 border-b bg-muted/20">
             <form onSubmit={handleFilterSubmit} className="flex flex-wrap items-center gap-2.5 text-xs">
               <div className="flex items-center gap-1.5">
                 <span className="text-muted-foreground">Dari:</span>

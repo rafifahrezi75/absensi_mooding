@@ -219,7 +219,7 @@ export function LogDetailPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-5 space-y-6">
             <Card className="shadow-xs border overflow-hidden">
-              <CardHeader className="pb-3 border-b bg-muted/20">
+              <CardHeader className="py-3 px-4 border-b bg-muted/20">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <ImageIcon className="h-4 w-4 text-primary" />
@@ -238,99 +238,79 @@ export function LogDetailPage() {
                   )}
                 </div>
               </CardHeader>
-              <CardContent className="p-4 space-y-4">
+              <CardContent className="p-4">
                 {event.auth_method === 'face_liveness' ? (
-                  <div className="space-y-3">
-                    <div className="relative aspect-4/3 rounded-xl overflow-hidden border bg-black flex items-center justify-center group">
-                      {event.proof_photo_url ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setZoomPhoto({
-                              url: event.proof_photo_url,
-                              title: `Foto Hadap Lurus - ${event.nama_karyawan}`,
-                            })
-                          }
-                          className="w-full h-full relative focus-visible:outline-2 focus-visible:outline-ring"
-                        >
-                          <img
-                            src={event.proof_photo_url}
-                            alt="Foto Hadap Lurus"
-                            className="w-full h-full object-contain"
-                          />
-                          <div className="absolute top-2.5 left-2.5 rounded-full bg-black/75 text-white text-[11px] font-semibold px-2.5 py-1">
-                            1. Hadap Lurus
-                          </div>
-                        </button>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center text-muted-foreground p-6 text-center space-y-2">
-                          <ImageIcon className="h-10 w-10 stroke-1 text-muted-foreground/40" />
-                          <div className="text-xs">Foto bukti fisik tidak tersedia pada record ini</div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2.5">
-                      {[
-                        {
-                          key: 'front',
-                          title: 'Lurus',
-                          fullTitle: 'Foto Hadap Lurus',
-                          url: event.proof_photo_url,
-                        },
-                        {
-                          key: 'left',
-                          title: 'Kiri',
-                          fullTitle: 'Foto Tengok Kiri',
-                          url: event.proof_photo_left_url,
-                        },
-                        {
-                          key: 'right',
-                          title: 'Kanan',
-                          fullTitle: 'Foto Tengok Kanan',
-                          url: event.proof_photo_right_url,
-                        },
-                      ].map((shot) => (
-                        <div key={shot.key} className="space-y-1">
-                          {shot.url ? (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setZoomPhoto({
-                                  url: shot.url,
-                                  title: `${shot.fullTitle} - ${event.nama_karyawan}`,
-                                })
-                              }
-                              className="relative aspect-4/3 w-full rounded-lg overflow-hidden border bg-black group focus-visible:outline-2 focus-visible:outline-ring"
-                            >
-                              <img
-                                src={shot.url}
-                                alt={shot.fullTitle}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                              />
-                              <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] font-semibold py-0.5 px-1.5 flex items-center justify-between">
-                                <span>{shot.title}</span>
-                                <Maximize2 className="h-2.5 w-2.5" />
-                              </div>
-                            </button>
-                          ) : (
-                            <div className="aspect-4/3 rounded-lg border border-dashed bg-muted/30 flex flex-col items-center justify-center p-2 text-center">
-                              <ImageIcon className="h-4 w-4 text-muted-foreground/50 mb-1" />
-                              <span className="text-[10px] text-muted-foreground">{shot.title}: N/A</span>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {[
+                      {
+                        key: 'front',
+                        title: 'Lurus',
+                        fullTitle: 'Foto Hadap Lurus',
+                        url: event.proof_photo_url,
+                      },
+                      {
+                        key: 'left',
+                        title: 'Kiri',
+                        fullTitle: 'Foto Tengok Kiri',
+                        url: event.proof_photo_left_url,
+                      },
+                      {
+                        key: 'right',
+                        title: 'Kanan',
+                        fullTitle: 'Foto Tengok Kanan',
+                        url: event.proof_photo_right_url,
+                      },
+                    ].map((shot) => (
+                      <div key={shot.key} className="space-y-1">
+                        {shot.url ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setZoomPhoto({
+                                url: shot.url,
+                                title: `${shot.fullTitle} - ${event.nama_karyawan}`,
+                              })
+                            }
+                            className="relative aspect-4/3 w-full rounded-lg overflow-hidden border bg-black group focus-visible:outline-2 focus-visible:outline-ring"
+                          >
+                            <img
+                              src={shot.url}
+                              alt={shot.fullTitle}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            />
+                            <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-[10px] font-semibold py-0.5 px-1.5 flex items-center justify-between">
+                              <span>{shot.title}</span>
+                              <Maximize2 className="h-2.5 w-2.5" />
                             </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                          </button>
+                        ) : (
+                          <div className="aspect-4/3 rounded-lg border border-dashed bg-muted/30 flex flex-col items-center justify-center p-2 text-center">
+                            <ImageIcon className="h-4 w-4 text-muted-foreground/50 mb-1" />
+                            <span className="text-[10px] text-muted-foreground">{shot.title}: N/A</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="relative aspect-4/3 rounded-xl overflow-hidden border bg-black flex items-center justify-center">
                     {event.proof_photo_url ? (
-                      <img
-                        src={event.proof_photo_url}
-                        alt="Foto Bukti Absensi"
-                        className="w-full h-full object-contain"
-                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setZoomPhoto({
+                            url: event.proof_photo_url,
+                            title: `Foto Bukti Presensi - ${event.nama_karyawan}`,
+                          })
+                        }
+                        className="w-full h-full relative focus-visible:outline-2 focus-visible:outline-ring"
+                      >
+                        <img
+                          src={event.proof_photo_url}
+                          alt="Foto Bukti Absensi"
+                          className="w-full h-full object-contain"
+                        />
+                      </button>
                     ) : (
                       <div className="flex flex-col items-center justify-center text-muted-foreground p-6 text-center space-y-2">
                         <ImageIcon className="h-10 w-10 stroke-1 text-muted-foreground/40" />
@@ -339,17 +319,11 @@ export function LogDetailPage() {
                     )}
                   </div>
                 )}
-
-                {event.proof_photo_path && (
-                  <div className="text-[11px] font-mono text-muted-foreground truncate bg-muted/40 p-2 rounded-md">
-                    File: {event.proof_photo_path}
-                  </div>
-                )}
               </CardContent>
             </Card>
 
-            <Card className="shadow-xs border">
-              <CardHeader className="pb-3 border-b">
+            <Card className="shadow-xs border overflow-hidden">
+              <CardHeader className="py-3 px-4 border-b bg-muted/20">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-primary" />
                   <span>Integritas & Verifikasi Biometrik</span>
@@ -411,8 +385,8 @@ export function LogDetailPage() {
           </div>
 
           <div className="lg:col-span-7 space-y-6">
-            <Card className="shadow-xs border">
-              <CardHeader className="pb-3 border-b">
+            <Card className="shadow-xs border overflow-hidden">
+              <CardHeader className="py-3 px-4 border-b bg-muted/20">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <UserCheck className="h-4 w-4 text-primary" />
@@ -464,8 +438,8 @@ export function LogDetailPage() {
               </CardContent>
             </Card>
 
-            <Card className="shadow-xs border">
-              <CardHeader className="pb-3 border-b">
+            <Card className="shadow-xs border overflow-hidden">
+              <CardHeader className="py-3 px-4 border-b bg-muted/20">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Clock className="h-4 w-4 text-primary" />
                   <span>Waktu & Terminal Presensi</span>
@@ -520,8 +494,8 @@ export function LogDetailPage() {
               </CardContent>
             </Card>
 
-            <Card className="shadow-xs border">
-              <CardHeader className="pb-3 border-b">
+            <Card className="shadow-xs border overflow-hidden">
+              <CardHeader className="py-3 px-4 border-b bg-muted/20">
                 <CardTitle className="text-sm font-semibold flex items-center gap-2">
                   <Building className="h-4 w-4 text-primary" />
                   <span>Sinkronisasi ERP & Jejak Audit</span>
