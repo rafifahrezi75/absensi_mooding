@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { formatLateLabel } from '@/lib/utils';
 
 export function LogDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -560,7 +561,7 @@ export function LogDetailPage() {
 
                   <div className="flex items-center justify-between py-1 border-b">
                     <span className="text-muted-foreground">Status Pesan ERP:</span>
-                    <span className="font-medium text-foreground">{event.main_app_status_label || '-'}</span>
+                    <span className="font-medium text-foreground">{formatLateLabel(event.main_app_status_label)}</span>
                   </div>
 
                   <div className="flex items-center justify-between py-1 border-b">

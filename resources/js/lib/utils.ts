@@ -35,3 +35,23 @@ export function getPageNumbers(currentPage: number, totalPages: number) {
   }
   return rangeWithDots;
 }
+
+export function formatLateLabel(label?: string | null): string {
+  if (!label) return '-';
+  return label.replace(/Terlambat\s+([0-9]+(?:\.[0-9]+)?)\s*menit/gi, (_, minStr) => {
+    const minFloat = parseFloat(minStr);
+    const totalSeconds = Math.round(minFloat * 60);
+    if (totalSeconds <= 0) return 'Terlambat 0 detik';
+
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const parts: string[] = [];
+    if (hours > 0) parts.push(`${hours} jam`);
+    if (minutes > 0) parts.push(`${minutes} menit`);
+    if (seconds > 0 || parts.length === 0) parts.push(`${seconds} detik`);
+
+    return `Terlambat ${parts.join(' ')}`;
+  });
+}

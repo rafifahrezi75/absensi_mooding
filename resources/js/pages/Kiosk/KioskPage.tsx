@@ -30,6 +30,7 @@ import {
 import { cacheEmployees, getCachedEmployees } from '@/lib/offlineQueue';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { formatLateLabel } from '@/lib/utils';
 
 const ERROR_COOLDOWN_MS = {
   info: 3000,
@@ -827,7 +828,7 @@ export function KioskPage() {
                   </div>
                   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-semibold text-sm">
                     <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                    <span>{lastResult.status_label || lastResult.message || 'Absen Berhasil'}</span>
+                    <span>{formatLateLabel(lastResult.status_label) || lastResult.message || 'Absen Berhasil'}</span>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     Tercatat pukul: <span className="font-mono font-bold">{lastResult.recorded_time}</span>

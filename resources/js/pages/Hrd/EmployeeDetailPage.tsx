@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { formatLateLabel } from '@/lib/utils';
 
 const POSE_SLOTS = [
   { key: 'front', label: 'Hadap Lurus', shortLabel: 'Lurus' },
@@ -883,7 +884,7 @@ export function EmployeeDetailPage() {
                             </td>
                             <td className="py-3 px-4">
                               <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                                {ev.status_label || 'Tercatat'}
+                                {formatLateLabel(ev.status_label)}
                               </span>
                             </td>
                             <td className="py-3 px-4 text-right">

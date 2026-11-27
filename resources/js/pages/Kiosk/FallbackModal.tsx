@@ -7,6 +7,7 @@ import { compressProofPhoto } from '@/lib/biometricEngine';
 import { saveOfflineEvent } from '@/lib/offlineQueue';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { formatLateLabel } from '@/lib/utils';
 
 interface FallbackModalProps {
   isOpen: boolean;
@@ -102,7 +103,7 @@ export function FallbackModal({
     try {
       const res = await axios.post('/api/kiosk/fallback-tap', payload);
       if (res.data.success) {
-        toast.success(res.data.status_label || 'Absensi berhasil');
+        toast.success(formatLateLabel(res.data.status_label) || 'Absensi berhasil');
         onSuccess(res.data);
         handleClose();
       } else {

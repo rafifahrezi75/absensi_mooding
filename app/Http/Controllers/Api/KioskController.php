@@ -388,8 +388,9 @@ class KioskController extends Controller
             if ($shift) {
                 $shiftStart = Carbon::parse($workDate.' '.$shift->start_time);
                 if ($recordedTime->greaterThan($shiftStart)) {
-                    $diff = $shiftStart->diffInMinutes($recordedTime);
-                    $statusLabel = 'Masuk Berhasil — Terlambat '.$diff.' menit';
+                    $diffSeconds = $shiftStart->diffInSeconds($recordedTime);
+                    $lateStr = AttendanceEvent::formatLateDuration($diffSeconds);
+                    $statusLabel = 'Masuk Berhasil — Terlambat '.$lateStr;
                 } else {
                     $statusLabel = 'Masuk Berhasil — Tepat Waktu';
                 }
@@ -510,6 +511,25 @@ class KioskController extends Controller
 
         $recordedTime = Carbon::parse($validated['recorded_at'])->setTimezone(config('app.timezone'));
         $statusLabel = 'Jalur Darurat (PIN) — '.ucfirst(str_replace('_', ' ', $validated['attendance_type'])).' '.$recordedTime->format('H:i').' WIB';
+
+        if ($validated['attendance_type'] === 'clock_in') {
+            $shift = ShiftSnapshot::where('company_id', $employee->company_id)
+                ->where('external_shift_id', $employee->shift_id)
+                ->first();
+
+            if ($shift) {
+                $shiftStart = Carbon::parse($validated['work_date'].' '.$shift->start_time);
+                if ($recordedTime->greaterThan($shiftStart)) {
+                    $diffSeconds = $shiftStart->diffInSeconds($recordedTime);
+                    $lateStr = AttendanceEvent::formatLateDuration($diffSeconds);
+                    $statusLabel = 'Jalur Darurat (PIN) — Masuk Berhasil — Terlambat '.$lateStr;
+                } else {
+                    $statusLabel = 'Jalur Darurat (PIN) — Masuk Berhasil — Tepat Waktu';
+                }
+            } else {
+                $statusLabel = 'Jalur Darurat (PIN) — Masuk Berhasil';
+            }
+        }
 
         $event = AttendanceEvent::create([
             'idempotency_key' => $validated['idempotency_key'],

@@ -107,6 +107,7 @@ class IntegrationController extends Controller
                     'absensi_id' => $existingReceipt->absensi_id,
                     'status_label' => 'Sudah tercatat sebelumnya',
                 ];
+
                 continue;
             }
 
@@ -116,8 +117,9 @@ class IntegrationController extends Controller
                     'idempotency_key' => $idempotencyKey,
                     'status' => 'period_locked',
                     'absensi_id' => null,
-                    'status_label' => 'Periode payroll telah dikunci (' . $monthPeriod . ')',
+                    'status_label' => 'Periode payroll telah dikunci ('.$monthPeriod.')',
                 ];
+
                 continue;
             }
 
@@ -125,18 +127,19 @@ class IntegrationController extends Controller
                 ->where('external_karyawan_id', $event['external_karyawan_id'])
                 ->first();
 
-            if (!$employee || strtolower($employee->status) !== 'aktif') {
+            if (! $employee || strtolower($employee->status) !== 'aktif') {
                 $results[] = [
                     'idempotency_key' => $idempotencyKey,
                     'status' => 'employee_inactive',
                     'absensi_id' => null,
                     'status_label' => 'Karyawan tidak aktif atau tidak ditemukan',
                 ];
+
                 continue;
             }
 
             $recordedTime = Carbon::parse($event['recorded_at']);
-            $statusLabel = 'Tercatat ' . $recordedTime->format('H:i');
+            $statusLabel = 'Tercatat '.$recordedTime->format('H:i');
 
             if ($event['attendance_type'] === 'clock_in') {
                 $shift = ShiftSnapshot::where('company_id', $event['company_id'])
@@ -144,10 +147,11 @@ class IntegrationController extends Controller
                     ->first();
 
                 if ($shift) {
-                    $shiftStart = Carbon::parse($event['work_date'] . ' ' . $shift->start_time);
+                    $shiftStart = Carbon::parse($event['work_date'].' '.$shift->start_time);
                     if ($recordedTime->greaterThan($shiftStart)) {
-                        $diffMinutes = $shiftStart->diffInMinutes($recordedTime);
-                        $statusLabel = 'Masuk Berhasil — Terlambat ' . $diffMinutes . ' menit';
+                        $diffSeconds = $shiftStart->diffInSeconds($recordedTime);
+                        $lateStr = AttendanceEvent::formatLateDuration($diffSeconds);
+                        $statusLabel = 'Masuk Berhasil — Terlambat '.$lateStr;
                     } else {
                         $statusLabel = 'Masuk Berhasil — Tepat Waktu';
                     }

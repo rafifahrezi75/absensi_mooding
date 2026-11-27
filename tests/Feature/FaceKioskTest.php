@@ -1188,4 +1188,17 @@ class FaceKioskTest extends TestCase
             $this->assertFalse($item['has_biometric']);
         }
     }
+
+    public function test_late_duration_formatting_in_hours_minutes_seconds(): void
+    {
+        $this->assertSame('20 detik', AttendanceEvent::formatLateDuration(20));
+        $this->assertSame('12 menit 20 detik', AttendanceEvent::formatLateDuration(740));
+        $this->assertSame('12 menit', AttendanceEvent::formatLateDuration(720));
+        $this->assertSame('1 jam', AttendanceEvent::formatLateDuration(3600));
+        $this->assertSame('1 jam 15 menit 30 detik', AttendanceEvent::formatLateDuration(4530));
+
+        $raw = 'Masuk Berhasil — Terlambat 12.333333333333 menit';
+        $sanitized = AttendanceEvent::sanitizeStatusLabel($raw);
+        $this->assertSame('Masuk Berhasil — Terlambat 12 menit 20 detik', $sanitized);
+    }
 }

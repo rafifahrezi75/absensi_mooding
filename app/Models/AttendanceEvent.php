@@ -88,4 +88,48 @@ class AttendanceEvent extends Model
     {
         return $this->belongsTo(KioskDevice::class, 'kiosk_device_id');
     }
+
+    public function getMainAppStatusLabelAttribute(?string $value): ?string
+    {
+        return self::sanitizeStatusLabel($value);
+    }
+
+    public static function formatLateDuration(int|float $seconds): string
+    {
+        $totalSeconds = (int) round($seconds);
+        if ($totalSeconds <= 0) {
+            return '0 detik';
+        }
+
+        $hours = intdiv($totalSeconds, 3600);
+        $minutes = intdiv($totalSeconds % 3600, 60);
+        $sec = $totalSeconds % 60;
+
+        $parts = [];
+        if ($hours > 0) {
+            $parts[] = "{$hours} jam";
+        }
+        if ($minutes > 0) {
+            $parts[] = "{$minutes} menit";
+        }
+        if ($sec > 0 || empty($parts)) {
+            $parts[] = "{$sec} detik";
+        }
+
+        return implode(' ', $parts);
+    }
+
+    public static function sanitizeStatusLabel(?string $label): ?string
+    {
+        if (empty($label)) {
+            return $label;
+        }
+
+        return preg_replace_callback('/Terlambat\s+([0-9]+(?:\.[0-9]+)?)\s*menit/i', function ($matches) {
+            $minutesFloat = (float) $matches[1];
+            $totalSeconds = (int) round($minutesFloat * 60);
+
+            return 'Terlambat '.self::formatLateDuration($totalSeconds);
+        }, $label);
+    }
 }

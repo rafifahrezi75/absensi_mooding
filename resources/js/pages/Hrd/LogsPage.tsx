@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { formatLateLabel } from '@/lib/utils';
 
 export function LogsPage() {
   const navigate = useNavigate();
@@ -300,7 +301,7 @@ export function LogsPage() {
                                 )}
                               </div>
                               <div className="text-[10px] text-muted-foreground">
-                                {ev.main_app_status_label || '-'}
+                                {formatLateLabel(ev.main_app_status_label)}
                               </div>
                             </div>
                           </td>
