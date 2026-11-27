@@ -310,7 +310,7 @@ export function KioskPage() {
   };
 
   const triggerRecognition = async (
-    challengeType: string,
+    challengeType: string = 'FRONTAL',
     challengeFrames: Blob[] = []
   ) => {
     if (scanLockRef.current) return;
@@ -318,7 +318,7 @@ export function KioskPage() {
     setScanStatus('scanning');
 
     if (pythonEngineActive && videoRef.current) {
-      const minRequired = Math.min(config?.settings?.min_consistent_frames || 3, config?.settings?.capture_frame_count || 5);
+      const minRequired = challengeType === 'FRONTAL' ? 1 : Math.min(config?.settings?.min_consistent_frames || 1, config?.settings?.capture_frame_count || 1);
       const frames = [...challengeFrames];
       if (frames.length >= minRequired) {
         const companyId = config?.location?.company_id || 1;
@@ -378,6 +378,11 @@ export function KioskPage() {
           );
           return;
         } else if (recRes.decision === 'QUALITY_REJECTED') {
+          if (recRes.reject_reason === 'FACE_NOT_DETECTED' || recRes.reject_reason === 'NO_FRAMES_SUBMITTED') {
+            scanLockRef.current = false;
+            setScanStatus('idle');
+            return;
+          }
           beginErrorCooldown(recRes.message || 'Kualitas frame wajah belum memenuhi standar');
           return;
         } else {
@@ -406,6 +411,7 @@ export function KioskPage() {
   };
 
   useEffect(() => {
+    let steadyFaceCount = 0;
     const loopInterval = setInterval(async () => {
       if (
         !videoRef.current ||
@@ -430,74 +436,45 @@ export function KioskPage() {
 
       try {
         serverOnlyTimerRef.current++;
-        const sequenceStep = serverOnlyTimerRef.current;
-        const identityFrameCount = config?.settings?.capture_frame_count || 5;
-        const requiredFrames = identityFrameCount + 2;
-        const shouldCapture =
-          (sequenceStep % 3 === 0 && livenessFramesRef.current.length < requiredFrames) ||
-          (sequenceStep > 30 && livenessFramesRef.current.length < requiredFrames);
+        const timerStep = serverOnlyTimerRef.current;
 
-        if (sequenceStep < 15) {
-          setChallengeUI({
-            text: 'Hadap Lurus',
-            subtext: 'Tahan posisi sebentar',
-            badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40 animate-pulse',
-            borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
-          });
-        } else if (sequenceStep < 25) {
-          setChallengeUI({
-            text: 'Tengok Kanan',
-            subtext: 'Arahkan kepala sedikit ke kanan',
-            badgeClass: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/40 animate-pulse',
-            borderClass: 'border-indigo-400 scale-100 shadow-[0_0_25px_rgba(99,102,241,0.35)]',
-          });
-        } else {
-          setChallengeUI({
-            text: 'Tengok Kiri',
-            subtext: 'Arahkan kepala sedikit ke kiri',
-            badgeClass: 'bg-violet-500/20 text-violet-300 border-violet-500/40 animate-pulse',
-            borderClass: 'border-violet-400 scale-100 shadow-[0_0_25px_rgba(167,139,250,0.35)]',
-          });
-        }
+        setChallengeUI({
+          text: 'Hadap Lurus',
+          subtext: 'Posisikan wajah di dalam bingkai',
+          badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40 animate-pulse',
+          borderClass: 'border-sky-400 scale-100 shadow-[0_0_25px_rgba(56,189,248,0.35)]',
+        });
 
-        if (shouldCapture && videoRef.current.readyState >= 2) {
-          const frame = await captureFrameBlob(videoRef.current);
-          if (frame) {
-            livenessFramesRef.current = [...livenessFramesRef.current, frame];
-            if (sequenceStep < 15) {
-              phaseProofRef.current.front = frame;
-            } else if (sequenceStep < 25) {
-              phaseProofRef.current.slight_right = frame;
-            } else {
-              phaseProofRef.current.slight_left = frame;
+        if (videoRef.current.readyState >= 2) {
+          const faceBox = await detectFaceBoxFast(videoRef.current);
+          if (faceBox && faceBox.width >= 50 && faceBox.height >= 50) {
+            steadyFaceCount++;
+          } else {
+            steadyFaceCount = 0;
+          }
+
+          const shouldScan = steadyFaceCount >= 2 || (timerStep >= 12 && steadyFaceCount >= 1);
+          if (shouldScan) {
+            steadyFaceCount = 0;
+            serverOnlyTimerRef.current = 0;
+            const frame = await captureFrameBlob(videoRef.current);
+            if (frame) {
+              setChallengeUI({
+                text: 'Memverifikasi...',
+                subtext: 'Mencocokkan biometrik wajah...',
+                badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse',
+                borderClass: 'border-emerald-400 scale-100 shadow-[0_0_25px_rgba(52,211,153,0.35)]',
+              });
+              await triggerRecognition('FRONTAL', [frame]);
+              return;
             }
           }
-        }
-
-        if (sequenceStep >= 28 && livenessFramesRef.current.length >= requiredFrames) {
-          serverOnlyTimerRef.current = 0;
-          const challengeFrames = [...livenessFramesRef.current];
-          livenessFramesRef.current = [];
-          await triggerRecognition('HEAD_TURN', challengeFrames);
-          return;
-        }
-
-        if (sequenceStep >= 42) {
-          serverOnlyTimerRef.current = 0;
-          if (livenessFramesRef.current.length >= Math.min(identityFrameCount, 4)) {
-            const challengeFrames = [...livenessFramesRef.current];
-            livenessFramesRef.current = [];
-            await triggerRecognition('HEAD_TURN', challengeFrames);
-            return;
-          }
-          livenessFramesRef.current = [];
-          beginErrorCooldown('Kamera belum menangkap frame yang cukup. Silakan posisikan wajah lalu coba lagi.');
         }
       } catch (err) {
       } finally {
         isDetectingRef.current = false;
       }
-    }, 100);
+    }, 120);
 
     return () => clearInterval(loopInterval);
   }, [cameraActive, cachedEmployees, config, selectedType, pythonEngineActive, isFallbackOpen]);
@@ -530,25 +507,8 @@ export function KioskPage() {
     scanLockRef.current = true;
     setScanStatus('scanning');
 
-    const indices = verificationMeta?.proof_frame_indices;
-    const frontBlob =
-      (typeof indices?.front === 'number' ? capturedFrames[indices.front] : null) ||
-      phaseProofRef.current.front ||
-      null;
-    const leftBlob =
-      (typeof indices?.slight_left === 'number' ? capturedFrames[indices.slight_left] : null) ||
-      phaseProofRef.current.slight_left ||
-      null;
-    const rightBlob =
-      (typeof indices?.slight_right === 'number' ? capturedFrames[indices.slight_right] : null) ||
-      phaseProofRef.current.slight_right ||
-      null;
-
-    let [proofPhotoBase64, proofPhotoLeftBase64, proofPhotoRightBase64] = await Promise.all([
-      blobToBase64(frontBlob),
-      blobToBase64(leftBlob),
-      blobToBase64(rightBlob),
-    ]);
+    const frontBlob = capturedFrames[0] || phaseProofRef.current.front || null;
+    let proofPhotoBase64 = await blobToBase64(frontBlob);
     phaseProofRef.current = {};
 
     if (!proofPhotoBase64 && videoRef.current && videoRef.current.readyState >= 2) {
@@ -582,8 +542,8 @@ export function KioskPage() {
       liveness_passed: true,
       is_cross_location: isCrossLocation,
       proof_photo_base64: proofPhotoBase64,
-      proof_photo_left_base64: proofPhotoLeftBase64,
-      proof_photo_right_base64: proofPhotoRightBase64,
+      proof_photo_left_base64: null,
+      proof_photo_right_base64: null,
       session_id: verificationMeta?.session_id || idempotencyKey,
       decision: verificationMeta?.decision || 'VERIFIED',
       reject_reason: verificationMeta?.reject_reason || null,
@@ -593,7 +553,7 @@ export function KioskPage() {
       top2_score: verificationMeta?.top2_score || null,
       score_margin: verificationMeta?.score_margin || null,
       passive_spoof_score: verificationMeta?.passive_spoof_score || null,
-      active_liveness_type: verificationMeta?.challenge_type || 'HEAD_TURN',
+      active_liveness_type: verificationMeta?.challenge_type || 'FRONTAL',
       captured_frames: verificationMeta?.captured_frames || 1,
       consistent_frames: verificationMeta?.consistent_frames || 1,
       quality_score: verificationMeta?.quality_metrics?.quality_score || 100,

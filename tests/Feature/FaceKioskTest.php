@@ -65,10 +65,10 @@ class FaceKioskTest extends TestCase
                     'min_consistent_frames',
                 ],
             ])
-            ->assertJsonPath('settings.capture_frame_count', 5)
-            ->assertJsonPath('settings.min_consistent_frames', 3)
+            ->assertJsonPath('settings.capture_frame_count', 1)
+            ->assertJsonPath('settings.min_consistent_frames', 1)
             ->assertJsonPath('settings.allowed_challenges', [
-                'HEAD_TURN',
+                'FRONTAL',
             ]);
     }
 
@@ -1163,6 +1163,52 @@ class FaceKioskTest extends TestCase
         $this->assertNotNull($logDetailRes->json('event.proof_photo_url'));
         $this->assertNotNull($logDetailRes->json('event.proof_photo_left_url'));
         $this->assertNotNull($logDetailRes->json('event.proof_photo_right_url'));
+
+        AttendanceEvent::where('id', $eventId)->delete();
+    }
+
+    public function test_kiosk_attendance_tap_stores_single_frontal_proof_photo_and_omits_side_photos(): void
+    {
+        Storage::fake('public');
+        $emp = Employee::where('id_karyawan', 'EMP001')->first();
+        $this->assertNotNull($emp);
+
+        $idempotencyKey = 'test-single-proof-'.uniqid();
+        $workDate = date('Y-m-d', strtotime('+31 days'));
+        AttendanceEvent::where('employee_id', $emp->id)->where('work_date', $workDate)->delete();
+        $ts = time();
+        $token = hash_hmac('sha256', "{$emp->id}:{$ts}:VERIFIED", config('biometric.shared_secret'));
+
+        $response = $this->postJson('/api/kiosk/attendance-tap', [
+            'idempotency_key' => $idempotencyKey,
+            'employee_id' => $emp->id,
+            'work_date' => $workDate,
+            'attendance_type' => 'clock_in',
+            'auth_method' => 'face_liveness',
+            'recorded_at' => date('c'),
+            'confidence_score' => 0.93,
+            'decision' => 'VERIFIED',
+            'top1_employee_id' => $emp->id,
+            'top1_score' => 0.93,
+            'liveness_passed' => true,
+            'attestation_token' => $token,
+            'attestation_timestamp' => $ts,
+            'active_liveness_type' => 'FRONTAL',
+            'proof_photo_base64' => 'data:image/jpeg;base64,'.base64_encode('single-front-proof'),
+            'proof_photo_left_base64' => null,
+            'proof_photo_right_base64' => null,
+        ]);
+
+        $response->assertStatus(200);
+        $eventId = $response->json('event.id');
+        $this->assertNotNull($eventId);
+
+        $headers = $this->authenticateHrd();
+        $logDetailRes = $this->getJson("/api/hrd/logs/{$eventId}", $headers);
+        $logDetailRes->assertOk();
+        $this->assertNotNull($logDetailRes->json('event.proof_photo_url'));
+        $this->assertNull($logDetailRes->json('event.proof_photo_left_url'));
+        $this->assertNull($logDetailRes->json('event.proof_photo_right_url'));
 
         AttendanceEvent::where('id', $eventId)->delete();
     }

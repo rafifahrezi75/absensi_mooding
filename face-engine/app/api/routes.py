@@ -385,45 +385,52 @@ async def recognize_face(
             message="Format gambar tidak valid"
         )
 
-    if len(frames_bgr) < settings.min_consistent_frames:
+    normalized_challenge = (challenge_type or "FRONTAL").upper()
+    is_single_shot = normalized_challenge in ["FRONTAL", "STEADY", "PASSIVE", "AUTO_STEADY", "NONE"]
+    min_required_frames = 1 if is_single_shot else settings.min_consistent_frames
+
+    if len(frames_bgr) < min_required_frames:
         return RecognizeResponse(
             status="insufficient_frames",
             decision="RETRY",
             reject_reason="INSUFFICIENT_CONSISTENT_FRAMES",
             captured_frames=len(frames_bgr),
             consistent_frames=0,
-            message="Jumlah frame wajah belum mencukupi, silakan ulangi gerakan"
+            message="Posisikan wajah di dalam bingkai kamera"
         )
 
     liveness_passed = True
     liveness_reason = "disabled"
-    normalized_challenge = (challenge_type or "BLINK").upper()
     if settings.enable_liveness:
-        if normalized_challenge in ["CLIENT_VERIFIED", "AUTO_STEADY", "VERIFIED", "NONE", "DISABLED"]:
-            return RecognizeResponse(
-                status="liveness_failed",
-                decision="RETRY",
-                reject_reason="SERVER_LIVENESS_REQUIRED",
-                liveness_passed=False,
-                liveness_reason="untrusted_client_liveness_marker",
-                challenge_type=challenge_type,
-                captured_frames=len(frames_bgr),
-                message="Verifikasi gerakan harus dibuktikan oleh server"
-            )
-        liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
-        if not liveness_passed:
-            elapsed = round((time.time() - start_time) * 1000, 2)
-            return RecognizeResponse(
-                status="liveness_failed",
-                decision="RETRY",
-                reject_reason="ACTIVE_LIVENESS_FAILED",
-                liveness_passed=False,
-                liveness_reason=liveness_reason,
-                challenge_type=challenge_type,
-                captured_frames=len(frames_bgr),
-                processing_ms=elapsed,
-                message="Gerakan tantangan aktif belum terverifikasi"
-            )
+        if is_single_shot:
+            liveness_passed = True
+            liveness_reason = "frontal_presence_verified"
+        else:
+            if normalized_challenge in ["CLIENT_VERIFIED", "VERIFIED", "DISABLED"]:
+                return RecognizeResponse(
+                    status="liveness_failed",
+                    decision="RETRY",
+                    reject_reason="SERVER_LIVENESS_REQUIRED",
+                    liveness_passed=False,
+                    liveness_reason="untrusted_client_liveness_marker",
+                    challenge_type=challenge_type,
+                    captured_frames=len(frames_bgr),
+                    message="Verifikasi gerakan harus dibuktikan oleh server"
+                )
+            liveness_passed, liveness_reason = verify_active_challenge(frames_bgr, normalized_challenge)
+            if not liveness_passed:
+                elapsed = round((time.time() - start_time) * 1000, 2)
+                return RecognizeResponse(
+                    status="liveness_failed",
+                    decision="RETRY",
+                    reject_reason="ACTIVE_LIVENESS_FAILED",
+                    liveness_passed=False,
+                    liveness_reason=liveness_reason,
+                    challenge_type=challenge_type,
+                    captured_frames=len(frames_bgr),
+                    processing_ms=elapsed,
+                    message="Gerakan tantangan aktif belum terverifikasi"
+                )
     valid_frame_embeddings = []
     valid_secondary_embeddings = []
     valid_secondary_qualities = []
@@ -521,7 +528,8 @@ async def recognize_face(
             message="Kualitas wajah belum memenuhi standar"
         )
 
-    if len(valid_frame_embeddings) < settings.min_recognition_frames:
+    min_rec_frames = 1 if is_single_shot else settings.min_recognition_frames
+    if len(valid_frame_embeddings) < min_rec_frames:
         elapsed = round((time.time() - start_time) * 1000, 2)
         return RecognizeResponse(
             status="insufficient_frontal_frames",
@@ -551,27 +559,33 @@ async def recognize_face(
             message="Terdeteksi foto atau rekaman layar (Anti-Spoof Reject)"
         )
 
-    stability = stability_score(valid_frame_embeddings)
-    if len(valid_frame_embeddings) >= 3 and stability < settings.min_probe_stability:
-        elapsed = round((time.time() - start_time) * 1000, 2)
-        return RecognizeResponse(
-            status="ambiguous",
-            decision="RETRY",
-            reject_reason="UNSTABLE_PROBE",
-            probe_stability=round(stability, 4),
-            captured_frames=len(frames_bgr),
-            consistent_frames=len(valid_frame_embeddings),
-            processing_ms=elapsed,
-            message="Wajah bergerak terlalu cepat antar frame, coba posisikan lebih tenang"
+    if len(valid_frame_embeddings) >= 3:
+        stability = stability_score(valid_frame_embeddings)
+        if stability < settings.min_probe_stability:
+            elapsed = round((time.time() - start_time) * 1000, 2)
+            return RecognizeResponse(
+                status="ambiguous",
+                decision="RETRY",
+                reject_reason="UNSTABLE_PROBE",
+                probe_stability=round(stability, 4),
+                captured_frames=len(frames_bgr),
+                consistent_frames=len(valid_frame_embeddings),
+                processing_ms=elapsed,
+                message="Wajah bergerak terlalu cepat antar frame, coba posisikan lebih tenang"
+            )
+    else:
+        stability = 1.0
+
+    if len(valid_frame_embeddings) > 1:
+        inlier_vectors, inlier_qualities = remove_embedding_outliers(
+            valid_frame_embeddings,
+            valid_frame_qualities,
+            min_similarity=0.55
         )
+    else:
+        inlier_vectors, inlier_qualities = valid_frame_embeddings, valid_frame_qualities
 
-    inlier_vectors, inlier_qualities = remove_embedding_outliers(
-        valid_frame_embeddings,
-        valid_frame_qualities,
-        min_similarity=0.55
-    )
-
-    if len(inlier_vectors) < settings.min_recognition_frames:
+    if len(inlier_vectors) < min_rec_frames:
         elapsed = round((time.time() - start_time) * 1000, 2)
         return RecognizeResponse(
             status="inconsistent_frames",
@@ -590,12 +604,16 @@ async def recognize_face(
     avg_probe_qual = float(np.mean(inlier_qualities))
     secondary_probe = None
     if valid_secondary_embeddings:
-        secondary_inliers, secondary_inlier_qualities = remove_embedding_outliers(
-            valid_secondary_embeddings,
-            valid_secondary_qualities,
-            min_similarity=0.30,
-        )
-        if len(secondary_inliers) >= settings.min_recognition_frames:
+        if len(valid_secondary_embeddings) > 1:
+            secondary_inliers, secondary_inlier_qualities = remove_embedding_outliers(
+                valid_secondary_embeddings,
+                valid_secondary_qualities,
+                min_similarity=0.30,
+            )
+        else:
+            secondary_inliers, secondary_inlier_qualities = valid_secondary_embeddings, valid_secondary_qualities
+
+        if len(secondary_inliers) >= min_rec_frames:
             secondary_probe = weighted_fusion(
                 secondary_inliers,
                 secondary_inlier_qualities,
@@ -626,7 +644,11 @@ async def recognize_face(
             hashlib.sha256
         ).hexdigest()
 
-    proof_frame_indices = None
+    proof_frame_indices = {
+        "front": 0,
+        "slight_left": 0,
+        "slight_right": 0,
+    }
     if detected_frame_yaws:
         front_idx = min(detected_frame_yaws, key=lambda item: abs(item[1]))[0]
         other_yaws = [item for item in detected_frame_yaws if item[0] != front_idx]

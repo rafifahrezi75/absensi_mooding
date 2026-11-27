@@ -142,6 +142,11 @@ def verify_active_challenge(
             return True, "open_mouth_verified"
         return False, "open_mouth_failed"
 
+    elif c_type in ["FRONTAL", "STEADY", "PASSIVE", "AUTO_STEADY", "NONE"]:
+        if len(ears) >= 1:
+            return True, "frontal_presence_verified"
+        return False, "frontal_not_detected"
+
     elif c_type in ["HEAD_TURN", "TURN_LEFT_OR_RIGHT"]:
         if len(nose_x_positions) >= 2:
             delta_x = max(nose_x_positions) - min(nose_x_positions)

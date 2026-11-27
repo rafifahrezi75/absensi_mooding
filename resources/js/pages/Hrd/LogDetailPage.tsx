@@ -239,7 +239,7 @@ export function LogDetailPage() {
                 </div>
               </CardHeader>
               <CardContent className="p-4">
-                {event.auth_method === 'face_liveness' ? (
+                {event.auth_method === 'face_liveness' && (event.proof_photo_left_url || event.proof_photo_right_url) ? (
                   <div className="grid grid-cols-3 gap-2.5">
                     {[
                       {
@@ -303,13 +303,17 @@ export function LogDetailPage() {
                             title: `Foto Bukti Presensi - ${event.nama_karyawan}`,
                           })
                         }
-                        className="w-full h-full relative focus-visible:outline-2 focus-visible:outline-ring"
+                        className="w-full h-full relative focus-visible:outline-2 focus-visible:outline-ring group"
                       >
                         <img
                           src={event.proof_photo_url}
                           alt="Foto Bukti Absensi"
                           className="w-full h-full object-contain"
                         />
+                        <div className="absolute inset-x-0 bottom-0 bg-black/70 text-white text-xs font-semibold py-1.5 px-3 flex items-center justify-between">
+                          <span>{event.auth_method === 'face_liveness' ? 'Foto Hadap Lurus' : 'Foto Presensi (PIN)'}</span>
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        </div>
                       </button>
                     ) : (
                       <div className="flex flex-col items-center justify-center text-muted-foreground p-6 text-center space-y-2">

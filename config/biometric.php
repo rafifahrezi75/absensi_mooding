@@ -4,8 +4,8 @@ return [
     'engine_url' => env('PYTHON_FACE_ENGINE_URL', 'http://127.0.0.1:8005'),
     'match_threshold' => (float) env('FACE_MATCH_THRESHOLD', 0.65),
     'margin_threshold' => (float) env('FACE_MARGIN_THRESHOLD', 0.08),
-    'capture_frame_count' => (int) env('FACE_CAPTURE_FRAME_COUNT', 5),
-    'min_consistent_frames' => (int) env('FACE_MIN_CONSISTENT_FRAMES', 3),
+    'capture_frame_count' => (int) env('FACE_CAPTURE_FRAME_COUNT', 1),
+    'min_consistent_frames' => (int) env('FACE_MIN_CONSISTENT_FRAMES', 1),
 
     'quality' => [
         'min_face_size' => (int) env('FACE_MIN_SIZE_PX', 85),
@@ -20,8 +20,8 @@ return [
     'liveness' => [
         'passive_anti_spoof_enabled' => (bool) env('FACE_PASSIVE_ANTI_SPOOF', true),
         'passive_spoof_threshold' => (float) env('FACE_PASSIVE_SPOOF_THRESHOLD', 0.45),
-        'active_liveness_enabled' => (bool) env('FACE_ACTIVE_LIVENESS', true),
-        'allowed_challenges' => ['HEAD_TURN'],
+        'active_liveness_enabled' => (bool) env('FACE_ACTIVE_LIVENESS', false),
+        'allowed_challenges' => ['FRONTAL'],
         'challenge_timeout_seconds' => (int) env('FACE_CHALLENGE_TIMEOUT_SECONDS', 8),
     ],
 
